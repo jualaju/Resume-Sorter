@@ -6,11 +6,26 @@ Connects to Gmail via IMAP, reads application emails, detects the applied
 role, downloads resume attachments, classifies them into the correct
 organisational folder, and logs every action.
 
+Features (all toggle-controlled via config.json)
+-------------------------------------------------
+- SHA-256 duplicate detection
+- Email subject filtering
+- Real-time monitoring (polling)
+- AI-based resume content reading
+- Auto department learning
+- Department statistics report
+- Resume format validation (invalid formats → Invalid_Resumes/)
+- Error handling folder (Errors/)
+- Processing summary
+- Dry-run mode
+
 Usage
 -----
-    python resume_sorter.py              # process all emails in configured mailbox
-    python resume_sorter.py --dry-run    # preview without downloading / moving
-    python resume_sorter.py --label Apps  # read from a custom Gmail label
+    python resume_sorter.py                # process all emails
+    python resume_sorter.py --dry-run      # preview without downloading
+    python resume_sorter.py --realtime     # keep polling for new emails
+    python resume_sorter.py --stats        # generate department statistics
+    python resume_sorter.py --label Apps   # read from a custom Gmail label
 """
 
 from __future__ import annotations
@@ -20,11 +35,15 @@ import csv
 import email
 import email.header
 import email.utils
+import hashlib
 import imaplib
+import json
 import logging
 import re
+import signal
 import sys
 import time
+from collections import Counter
 from datetime import datetime
 from email.message import Message
 from pathlib import Path
@@ -32,19 +51,33 @@ from typing import Optional
 
 from config import (
     ACCEPTED_EXTENSIONS,
+    ALLOWED_SUBJECT_KEYWORDS,
     BASE_DIR,
+    DEPARTMENT_REPORT_FILE,
+    ENABLE_AUTO_LEARNING,
+    ENABLE_DUPLICATE_CHECK,
+    ENABLE_LOGGING,
+    ENABLE_REAL_TIME,
+    ENABLE_RESUME_AI,
+    ENABLE_STATISTICS,
+    ENABLE_SUBJECT_FILTER,
+    ERROR_LOG_FILE,
+    ERRORS_DIR,
     FOLDER_STRUCTURE,
     GMAIL_ADDRESS,
     GMAIL_APP_PASSWORD,
+    HASHES_FILE,
     IMAP_PORT,
     IMAP_SERVER,
+    INVALID_DIR,
     LOG_FILE,
     MAILBOX,
     PROCESSED_LABEL,
+    REALTIME_POLL_INTERVAL,
     UNSORTED_DIR,
     YEAR,
 )
-from classifier import classify_role, extract_role
+from classifier import add_learned_mapping, classify_role, extract_role
 
 # ──────────────────────────────────────────────
 # Logging setup
@@ -55,6 +88,47 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("resume_sorter")
+
+# Graceful shutdown flag for real-time mode
+_shutdown = False
+
+
+def _signal_handler(sig, frame):
+    global _shutdown
+    _shutdown = True
+    logger.info("Shutdown signal received. Finishing current email…")
+
+
+# ──────────────────────────────────────────────
+# Processing counters
+# ──────────────────────────────────────────────
+
+
+def _new_counters() -> dict[str, int]:
+    return {
+        "emails_scanned": 0,
+        "resumes_downloaded": 0,
+        "duplicates_skipped": 0,
+        "unsorted_resumes": 0,
+        "invalid_format": 0,
+        "filtered_out": 0,
+        "errors": 0,
+    }
+
+
+def print_summary(counters: dict[str, int]) -> None:
+    """Print a formatted processing summary."""
+    print("\n" + "═" * 40)
+    print("        PROCESSING SUMMARY")
+    print("═" * 40)
+    print(f"  Emails scanned:      {counters['emails_scanned']}")
+    print(f"  Resumes downloaded:  {counters['resumes_downloaded']}")
+    print(f"  Duplicates skipped:  {counters['duplicates_skipped']}")
+    print(f"  Unsorted resumes:    {counters['unsorted_resumes']}")
+    print(f"  Invalid format:      {counters['invalid_format']}")
+    print(f"  Filtered out:        {counters['filtered_out']}")
+    print(f"  Errors:              {counters['errors']}")
+    print("═" * 40 + "\n")
 
 
 # ──────────────────────────────────────────────
@@ -70,37 +144,92 @@ def create_folder_tree() -> None:
         else:
             for sub in subs:
                 (BASE_DIR / YEAR / dept / sub).mkdir(parents=True, exist_ok=True)
-    # Always ensure Unsorted exists
+    # Always ensure special folders exist
     UNSORTED_DIR.mkdir(parents=True, exist_ok=True)
+    INVALID_DIR.mkdir(parents=True, exist_ok=True)
+    ERRORS_DIR.mkdir(parents=True, exist_ok=True)
     logger.info("Folder tree verified under %s", BASE_DIR)
 
 
 # ──────────────────────────────────────────────
-# CSV log helper
+# SHA-256 duplicate detection
 # ──────────────────────────────────────────────
 
 
+def _load_hashes() -> dict[str, dict]:
+    """Load the hash database from hashes.json."""
+    if not HASHES_FILE.exists():
+        return {}
+    try:
+        with open(HASHES_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_hashes(hashes: dict[str, dict]) -> None:
+    """Persist the hash database."""
+    HASHES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(HASHES_FILE, "w", encoding="utf-8") as f:
+        json.dump(hashes, f, indent=2, ensure_ascii=False)
+
+
+def compute_file_hash(data: bytes) -> str:
+    """Return the SHA-256 hex digest for raw bytes."""
+    return hashlib.sha256(data).hexdigest()
+
+
+def is_duplicate(data: bytes, filename: str, email_from: str) -> bool:
+    """Check if this file has been seen before. Records it if new."""
+    if not ENABLE_DUPLICATE_CHECK:
+        return False
+    file_hash = compute_file_hash(data)
+    hashes = _load_hashes()
+    if file_hash in hashes:
+        logger.info(
+            "  ⊘  Duplicate detected (SHA-256 match): %s", hashes[file_hash]["filename"]
+        )
+        return True
+    # Record new hash
+    hashes[file_hash] = {
+        "filename": filename,
+        "email_from": email_from,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+    }
+    _save_hashes(hashes)
+    return False
+
+
+# ──────────────────────────────────────────────
+# CSV log helpers
+# ──────────────────────────────────────────────
+
+_CSV_HEADERS = [
+    "timestamp",
+    "email_from",
+    "email_address",
+    "candidate_name",
+    "detected_role",
+    "classification_result",
+    "destination_folder",
+    "filename",
+    "status",
+]
+
+
 def _init_csv_log() -> None:
+    if not ENABLE_LOGGING:
+        return
     if not LOG_FILE.exists():
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(LOG_FILE, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(
-                [
-                    "timestamp",
-                    "email_from",
-                    "candidate_name",
-                    "detected_role",
-                    "classification_result",
-                    "destination_folder",
-                    "filename",
-                    "status",
-                ]
-            )
+            writer.writerow(_CSV_HEADERS)
 
 
 def log_to_csv(
     email_from: str,
+    email_address: str,
     candidate_name: str,
     detected_role: str,
     classification: str,
@@ -108,18 +237,48 @@ def log_to_csv(
     filename: str,
     status: str,
 ) -> None:
+    if not ENABLE_LOGGING:
+        return
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(
             [
                 datetime.now().isoformat(timespec="seconds"),
                 email_from,
+                email_address,
                 candidate_name,
                 detected_role,
                 classification,
                 dest_folder,
                 filename,
                 status,
+            ]
+        )
+
+
+# ──────────────────────────────────────────────
+# Error log helpers
+# ──────────────────────────────────────────────
+
+
+def _init_error_log() -> None:
+    if not ERROR_LOG_FILE.exists():
+        ERROR_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(ERROR_LOG_FILE, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["timestamp", "email_from", "filename", "error_reason"])
+
+
+def log_error(email_from: str, filename: str, error_reason: str) -> None:
+    _init_error_log()
+    with open(ERROR_LOG_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                datetime.now().isoformat(timespec="seconds"),
+                email_from,
+                filename,
+                error_reason,
             ]
         )
 
@@ -144,31 +303,77 @@ def decode_header_value(raw: Optional[str]) -> str:
 
 
 # ──────────────────────────────────────────────
+# Helper: extract email address
+# ──────────────────────────────────────────────
+
+
+def extract_email_address(from_header: str) -> str:
+    """Extract the bare email address from a From header."""
+    _, addr = email.utils.parseaddr(from_header)
+    return addr or ""
+
+
+# ──────────────────────────────────────────────
 # Helper: extract candidate name
 # ──────────────────────────────────────────────
+
+
+def _extract_name_from_filename(filename: str) -> str:
+    """Try to extract a person name from an attachment filename."""
+    if not filename:
+        return ""
+    name_part = re.sub(r"\.(pdf|docx?)$", "", filename, flags=re.I)
+    # Replace separators (underscores, hyphens) with spaces
+    name_part = re.sub(r"[_\-]+", " ", name_part)
+    # Replace dots between letters with spaces (e.g., Elavarasi.K → Elavarasi K)
+    name_part = re.sub(r"(?<=[A-Za-z])\.(?=[A-Za-z])", " ", name_part)
+    name_part = name_part.strip()
+    # Remove common non-name tokens
+    name_part = re.sub(
+        r"\b(resume|cv|application|cover\s*letter|qualifications?"
+        r"|and\s+experiences?|experiences?|certificates?|documents?"
+        r"|new|final|updated|latest|copy|scan|draft)\b",
+        "",
+        name_part,
+        flags=re.I,
+    ).strip()
+    # Remove month abbreviations (with optional trailing digits) and pure numbers
+    name_part = re.sub(
+        r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\d*\b",
+        "", name_part, flags=re.I,
+    )
+    name_part = re.sub(r"\b\d{2,4}\b", "", name_part)
+    # Collapse whitespace
+    name_part = re.sub(r"\s+", " ", name_part).strip(" .-–—")
+    # A person name: 1+ alphabetic words
+    if name_part and len(name_part) >= 2:
+        words = name_part.split()
+        alpha_words = [w for w in words if re.match(r"^[A-Za-z.]+$", w) and len(w) >= 1]
+        if alpha_words:
+            result = " ".join(alpha_words).title()
+            if len(result) >= 2:
+                return result
+    return ""
 
 
 def extract_candidate_name(from_header: str, subject: str, filename: str) -> str:
     """
     Best-effort extraction of the candidate's name.
 
-    Priority: From header display name → subject heuristics → filename.
+    Priority:
+      1. Filename (most reliable for forwarded emails like "Resume - John Doe.pdf")
+      2. From header display name (if it looks like a person, not an org)
+      3. Email local part
     """
-    # 1. Display name from From header  e.g.  "John Doe <john@…>"
+    # 1. Try filename first — often contains the actual candidate name
+    fname_name = _extract_name_from_filename(filename)
+    if fname_name:
+        return fname_name
+
+    # 2. Display name from From header  e.g.  "John Doe <john@…>"
     display, _ = email.utils.parseaddr(from_header)
     if display and not re.match(r"^[\w.+-]+@", display):
         return display.strip()
-
-    # 2. Filename without extension, split on underscores/dashes
-    if filename:
-        name_part = re.sub(r"\.(pdf|docx?)$", "", filename, flags=re.I)
-        name_part = re.sub(r"[_\-]+", " ", name_part).strip()
-        # Remove role-ish tokens
-        name_part = re.sub(
-            r"(resume|cv|application|cover\s*letter)", "", name_part, flags=re.I
-        ).strip()
-        if name_part and len(name_part) > 2:
-            return name_part.title()
 
     # 3. Email local part
     _, addr = email.utils.parseaddr(from_header)
@@ -192,6 +397,31 @@ def safe_filename(name: str) -> str:
     name = re.sub(r"\s+", "_", name)
     name = name.strip("_. ")
     return name
+
+
+def _clean_role_tag(role: str) -> str:
+    """Produce a compact role tag for use in filenames.
+
+    E.g. 'Assistant Professor -EEE' → 'AssistantProfessor_EEE'
+         'Faculty Position in Mechanical Engineering Department'
+             → 'FacultyPosition_MechanicalEngineering'
+    """
+    if not role:
+        return "Unknown"
+    # Remove noise words
+    tag = re.sub(
+        r"\b(the|of|for|in|and|a|an|post|position|dept|department)\b",
+        "",
+        role,
+        flags=re.I,
+    )
+    # Collapse separators
+    tag = re.sub(r"[\s_\-\u2013\u2014]+", " ", tag).strip()
+    # Title-case each word and join with underscore
+    words = [w.strip() for w in tag.split() if w.strip()]
+    if not words:
+        return safe_filename(role)
+    return "_".join(w.title() for w in words)
 
 
 def deduplicate_path(dest: Path) -> Path:
@@ -233,6 +463,21 @@ def get_body_text(msg: Message) -> str:
 
 
 # ──────────────────────────────────────────────
+# Subject filtering
+# ──────────────────────────────────────────────
+
+
+def passes_subject_filter(subject: str) -> bool:
+    """Return True if the subject passes the keyword filter (or filter is off)."""
+    if not ENABLE_SUBJECT_FILTER:
+        return True
+    if not ALLOWED_SUBJECT_KEYWORDS:
+        return True
+    subject_lower = subject.lower()
+    return any(kw.lower() in subject_lower for kw in ALLOWED_SUBJECT_KEYWORDS)
+
+
+# ──────────────────────────────────────────────
 # Core: process a single email
 # ──────────────────────────────────────────────
 
@@ -242,18 +487,36 @@ def process_email(
     uid: bytes,
     imap_conn: imaplib.IMAP4_SSL,
     dry_run: bool = False,
+    counters: Optional[dict[str, int]] = None,
 ) -> None:
     """Download attachments, classify, save, and log."""
+    if counters is None:
+        counters = _new_counters()
+
+    counters["emails_scanned"] += 1
+
     from_header = decode_header_value(msg.get("From", ""))
     subject = decode_header_value(msg.get("Subject", ""))
     body = get_body_text(msg)
+    email_addr = extract_email_address(from_header)
 
     logger.info("── Processing email ──")
     logger.info("  From   : %s", from_header)
     logger.info("  Subject: %s", subject)
 
-    # Collect valid attachments
-    attachments: list[tuple[str, bytes]] = []
+    # ── Subject filter ──
+    if not passes_subject_filter(subject):
+        logger.info("  ⊘  Filtered out (subject does not match keywords).")
+        counters["filtered_out"] += 1
+        log_to_csv(
+            from_header, email_addr, "", "", "(filtered)", "", "", "FILTERED_OUT"
+        )
+        return
+
+    # ── Collect ALL attachments (valid + invalid) ──
+    valid_attachments: list[tuple[str, bytes]] = []
+    invalid_attachments: list[tuple[str, bytes]] = []
+
     for part in msg.walk():
         content_disp = str(part.get("Content-Disposition", ""))
         if "attachment" not in content_disp:
@@ -263,70 +526,153 @@ def process_email(
             continue
         filename = decode_header_value(raw_filename)
         ext = Path(filename).suffix.lower()
-        if ext not in ACCEPTED_EXTENSIONS:
-            logger.info("  Skipping unsupported attachment: %s", filename)
-            continue
         data = part.get_payload(decode=True)
-        if data:
-            attachments.append((filename, data))
+        if not data:
+            continue
+        if ext in ACCEPTED_EXTENSIONS:
+            valid_attachments.append((filename, data))
+        else:
+            invalid_attachments.append((filename, data))
 
-    if not attachments:
-        logger.warning("  ⚠  No resume attachment found in this email.")
-        detected_role = extract_role(subject, body)
-        candidate_name = extract_candidate_name(from_header, subject, "")
+    # ── Handle invalid format attachments ──
+    for filename, data in invalid_attachments:
+        logger.info("  ⚠  Invalid format: %s → saving to Invalid_Resumes/", filename)
+        counters["invalid_format"] += 1
+        if not dry_run:
+            try:
+                dest = deduplicate_path(INVALID_DIR / filename)
+                dest.write_bytes(data)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("  Failed to save invalid file: %s", exc)
+                log_error(from_header, filename, str(exc))
+                counters["errors"] += 1
         log_to_csv(
             from_header,
-            candidate_name,
-            detected_role or "(none)",
-            "(no attachment)",
+            email_addr,
             "",
             "",
-            "NO_ATTACHMENT",
+            "(invalid format)",
+            str(INVALID_DIR),
+            filename,
+            "INVALID_FORMAT" if not dry_run else "DRY_RUN",
+        )
+
+    if not valid_attachments:
+        if not invalid_attachments:
+            logger.warning("  ⚠  No resume attachment found in this email.")
+            detected_role = extract_role(subject, body)
+            candidate_name = extract_candidate_name(from_header, subject, "")
+            log_to_csv(
+                from_header,
+                email_addr,
+                candidate_name,
+                detected_role or "(none)",
+                "(no attachment)",
+                "",
+                "",
+                "NO_ATTACHMENT",
+            )
+        return
+
+    for filename, data in valid_attachments:
+        try:
+            _process_single_attachment(
+                filename, data, from_header, email_addr, subject, body,
+                dry_run, counters,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("  Error processing attachment '%s': %s", filename, exc)
+            counters["errors"] += 1
+            log_error(from_header, filename, str(exc))
+            log_to_csv(
+                from_header, email_addr, "", "", "", "", filename, "ERROR"
+            )
+
+    # ── Move email to processed label (unless dry-run) ──
+    if not dry_run:
+        _move_to_processed(imap_conn, uid)
+
+
+def _process_single_attachment(
+    filename: str,
+    data: bytes,
+    from_header: str,
+    email_addr: str,
+    subject: str,
+    body: str,
+    dry_run: bool,
+    counters: dict[str, int],
+) -> None:
+    """Process a single valid attachment: classify, deduplicate, save."""
+
+    # ── Duplicate check ──
+    if is_duplicate(data, filename, from_header):
+        counters["duplicates_skipped"] += 1
+        log_to_csv(
+            from_header, email_addr, "", "", "(duplicate)", "", filename, "DUPLICATE"
         )
         return
 
-    for filename, data in attachments:
-        # 1. Extract role
-        detected_role = extract_role(subject, body, filename)
-        logger.info("  Detected role: %s", detected_role or "(none)")
+    # 1. Extract role
+    detected_role = extract_role(subject, body, filename)
+    logger.info("  Detected role: %s", detected_role or "(none)")
 
-        # 2. Classify
-        folder_rel = classify_role(detected_role)
-        logger.info("  Classification: %s", folder_rel)
+    # 2. Classify
+    folder_rel = classify_role(detected_role)
 
-        # 3. Candidate name
-        candidate_name = extract_candidate_name(from_header, subject, filename)
-        logger.info("  Candidate: %s", candidate_name)
+    # 3. If classified as Unsorted and resume AI is enabled, try content-based
+    if ENABLE_RESUME_AI and folder_rel == f"{YEAR}/Unsorted":
+        try:
+            from resume_reader import detect_department_from_content, extract_text
 
-        # 4. Build destination path
-        role_tag = safe_filename(detected_role) if detected_role else "Unknown"
-        ext = Path(filename).suffix
-        new_name = f"{safe_filename(candidate_name)}_{role_tag}{ext}"
-        dest_dir = BASE_DIR / folder_rel
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest_path = deduplicate_path(dest_dir / new_name)
+            ext = Path(filename).suffix.lower()
+            resume_text = extract_text(data, ext)
+            ai_folder = detect_department_from_content(resume_text)
+            if ai_folder:
+                folder_rel = ai_folder
+                logger.info("  Resume content override: %s", folder_rel)
+                # Learn this mapping for the future
+                if ENABLE_AUTO_LEARNING and detected_role:
+                    add_learned_mapping(detected_role, folder_rel)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("  Resume AI reading failed: %s", exc)
 
-        logger.info("  Destination: %s", dest_path)
+    logger.info("  Classification: %s", folder_rel)
 
-        if not dry_run:
-            dest_path.write_bytes(data)
-            logger.info("  ✓  Saved: %s", dest_path.name)
-        else:
-            logger.info("  [DRY-RUN] Would save to: %s", dest_path)
+    # Track unsorted
+    if folder_rel.endswith("/Unsorted"):
+        counters["unsorted_resumes"] += 1
 
+    # 3. Candidate name
+    candidate_name = extract_candidate_name(from_header, subject, filename)
+    logger.info("  Candidate: %s", candidate_name)
+
+    # 4. Build destination path — CandidateName_Role.ext
+    role_tag = _clean_role_tag(detected_role) if detected_role else "Unknown"
+    ext = Path(filename).suffix
+    new_name = f"{safe_filename(candidate_name)}_{role_tag}{ext}"
+    dest_dir = BASE_DIR / folder_rel
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = deduplicate_path(dest_dir / new_name)
+
+    if dry_run:
+        # Structured dry-run preview
+        dept_label = folder_rel.replace(f"{YEAR}/", "")
+        logger.info("  [DRY-RUN] Would save: %s → %s", candidate_name, dept_label)
         log_to_csv(
-            from_header,
-            candidate_name,
-            detected_role or "(none)",
-            folder_rel,
-            str(dest_path),
-            filename,
-            "SAVED" if not dry_run else "DRY_RUN",
+            from_header, email_addr, candidate_name,
+            detected_role or "(none)", folder_rel,
+            str(dest_path), filename, "DRY_RUN",
         )
-
-    # 5. Move email to processed label (unless dry-run)
-    if not dry_run:
-        _move_to_processed(imap_conn, uid)
+    else:
+        dest_path.write_bytes(data)
+        logger.info("  ✓  Saved: %s", dest_path.name)
+        counters["resumes_downloaded"] += 1
+        log_to_csv(
+            from_header, email_addr, candidate_name,
+            detected_role or "(none)", folder_rel,
+            str(dest_path), filename, "SAVED",
+        )
 
 
 # ──────────────────────────────────────────────
@@ -337,14 +683,12 @@ def process_email(
 def _ensure_label(imap_conn: imaplib.IMAP4_SSL, label: str) -> None:
     """Create a Gmail label if it doesn't already exist."""
     try:
-        # List existing labels
         status, data = imap_conn.list()
         if status == "OK" and data:
             existing = []
             for item in data:
                 if isinstance(item, bytes):
                     existing.append(item.decode("utf-8", errors="replace"))
-            # Check if label already exists
             label_exists = any(
                 f'"{label}"' in entry or f" {label}" in entry for entry in existing
             )
@@ -356,18 +700,125 @@ def _ensure_label(imap_conn: imaplib.IMAP4_SSL, label: str) -> None:
 
 
 def _move_to_processed(imap_conn: imaplib.IMAP4_SSL, uid: bytes) -> None:
-    """Add the 'Processed Applications' label and remove from INBOX."""
+    """Add the configured processed label via Gmail X-GM-LABELS."""
     try:
         _ensure_label(imap_conn, PROCESSED_LABEL)
-        # Gmail uses label names in double quotes for COPY
-        label = f'"{PROCESSED_LABEL}"'
-        imap_conn.uid("COPY", uid, label)
-        # Mark as deleted in current mailbox then expunge
-        imap_conn.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
-        imap_conn.expunge()
-        logger.info("  Moved to label: %s", PROCESSED_LABEL)
+        # Use Gmail's X-GM-LABELS extension to add label without COPY+DELETE
+        label_str = f'"{PROCESSED_LABEL}"'
+        result = imap_conn.uid("STORE", uid, "+X-GM-LABELS", label_str)
+        if result[0] == "OK":
+            logger.info("  ✓ Labelled: %s", PROCESSED_LABEL)
+        else:
+            # Fallback to COPY approach
+            imap_conn.uid("COPY", uid, label_str)
+            logger.info("  ✓ Labelled (copy): %s", PROCESSED_LABEL)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("  Could not move email to '%s': %s", PROCESSED_LABEL, exc)
+        logger.warning("  Could not label email '%s': %s", PROCESSED_LABEL, exc)
+
+
+# ──────────────────────────────────────────────
+# Auto-learning: detect manual moves
+# ──────────────────────────────────────────────
+
+
+def learn_from_manual_moves() -> int:
+    """
+    Scan processing_log.csv for entries that were saved to Unsorted.
+    If the file no longer exists in Unsorted but exists in a department
+    folder, learn the mapping.
+
+    Returns the number of new mappings learned.
+    """
+    if not ENABLE_AUTO_LEARNING:
+        return 0
+    if not LOG_FILE.exists():
+        return 0
+
+    learned = 0
+    with open(LOG_FILE, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            status = row.get("status", "")
+            if status != "SAVED":
+                continue
+            dest = row.get("destination_folder", "")
+            if "Unsorted" not in dest:
+                continue
+            role = row.get("detected_role", "")
+            if not role or role == "(none)":
+                continue
+            filename = row.get("filename", "")
+            if not filename:
+                continue
+
+            # Check if the file was moved out of Unsorted
+            unsorted_file = Path(dest)
+            if unsorted_file.exists():
+                continue  # Still in Unsorted
+
+            # Search for the file in department folders
+            for dept, subs in FOLDER_STRUCTURE.items():
+                folders_to_check = (
+                    [BASE_DIR / YEAR / dept] if not subs
+                    else [BASE_DIR / YEAR / dept / sub for sub in subs]
+                )
+                for folder in folders_to_check:
+                    candidate = folder / unsorted_file.name
+                    if candidate.exists():
+                        new_folder = f"{YEAR}/{dept}" if not subs else f"{YEAR}/{dept}/{folder.name}"
+                        add_learned_mapping(role, new_folder)
+                        learned += 1
+                        break
+
+    if learned:
+        logger.info("Learned %d new mapping(s) from manual moves.", learned)
+    return learned
+
+
+# ──────────────────────────────────────────────
+# Department statistics generator
+# ──────────────────────────────────────────────
+
+
+def generate_statistics() -> None:
+    """Read processing_log.csv and generate department_report.csv."""
+    if not LOG_FILE.exists():
+        logger.warning("No processing log found at %s", LOG_FILE)
+        return
+
+    dept_counts: Counter = Counter()
+
+    with open(LOG_FILE, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row.get("status") != "SAVED":
+                continue
+            classification = row.get("classification_result", "")
+            if not classification:
+                continue
+            # Extract department from path like "2026/CSE/Faculty"
+            parts = classification.split("/")
+            if len(parts) >= 2:
+                dept = parts[1]  # Department name
+                dept_counts[dept] += 1
+
+    # Write report
+    with open(DEPARTMENT_REPORT_FILE, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Department", "Applications"])
+        for dept, count in dept_counts.most_common():
+            writer.writerow([dept, count])
+
+    # Print report
+    print("\n" + "═" * 40)
+    print("      DEPARTMENT STATISTICS")
+    print("═" * 40)
+    print(f"  {'Department':<30} {'Applications':>10}")
+    print("  " + "─" * 42)
+    for dept, count in dept_counts.most_common():
+        print(f"  {dept:<30} {count:>10}")
+    print("═" * 40)
+    print(f"\n  Report saved to: {DEPARTMENT_REPORT_FILE}\n")
 
 
 # ──────────────────────────────────────────────
@@ -384,10 +835,16 @@ def connect_gmail() -> imaplib.IMAP4_SSL:
     return conn
 
 
-def run(mailbox: str, dry_run: bool = False) -> None:
-    """Fetch and process all emails in *mailbox*."""
+def run(mailbox: str, dry_run: bool = False) -> dict[str, int]:
+    """Fetch and process all emails in *mailbox*. Returns counters."""
     create_folder_tree()
     _init_csv_log()
+
+    counters = _new_counters()
+
+    # Auto-learning: detect manual moves on startup
+    if ENABLE_AUTO_LEARNING:
+        learn_from_manual_moves()
 
     conn = connect_gmail()
 
@@ -395,18 +852,22 @@ def run(mailbox: str, dry_run: bool = False) -> None:
         status, _ = conn.select(f'"{mailbox}"' if " " in mailbox else mailbox)
         if status != "OK":
             logger.error("Could not open mailbox '%s'.", mailbox)
-            return
+            return counters
 
         # Search ALL emails (read + unread)
         status, msg_ids = conn.uid("SEARCH", None, "ALL")
         if status != "OK" or not msg_ids or not msg_ids[0]:
             logger.info("No emails found in '%s'.", mailbox)
-            return
+            return counters
 
         uids = msg_ids[0].split()
         logger.info("Found %d email(s) in '%s'.", len(uids), mailbox)
 
         for uid in uids:
+            if _shutdown:
+                logger.info("Shutting down gracefully…")
+                break
+
             status, raw = conn.uid("FETCH", uid, "(RFC822)")
             if status != "OK" or not raw or not raw[0]:
                 logger.warning("Failed to fetch UID %s", uid)
@@ -420,12 +881,12 @@ def run(mailbox: str, dry_run: bool = False) -> None:
 
             msg = email.message_from_bytes(raw_bytes)
             try:
-                process_email(msg, uid, conn, dry_run=dry_run)
+                process_email(msg, uid, conn, dry_run=dry_run, counters=counters)
             except Exception:
                 logger.exception("Error processing UID %s", uid)
+                counters["errors"] += 1
                 continue
 
-            # Be polite to Gmail rate limits
             time.sleep(0.3)
 
     finally:
@@ -436,7 +897,103 @@ def run(mailbox: str, dry_run: bool = False) -> None:
         conn.logout()
         logger.info("Disconnected from Gmail.")
 
+    # Print summary
+    print_summary(counters)
+
+    # Generate statistics if enabled
+    if ENABLE_STATISTICS and not dry_run:
+        generate_statistics()
+
     logger.info("Done.  CSV log at %s", LOG_FILE)
+    return counters
+
+
+def run_realtime(mailbox: str, dry_run: bool = False) -> None:
+    """
+    Real-time mode: process existing emails, then poll for new ones.
+
+    Polls every ``REALTIME_POLL_INTERVAL`` seconds for new UNSEEN emails.
+    Press Ctrl+C to stop.
+    """
+    global _shutdown
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+
+    logger.info("Starting real-time monitoring (poll every %ds)…", REALTIME_POLL_INTERVAL)
+    logger.info("Press Ctrl+C to stop.\n")
+
+    create_folder_tree()
+    _init_csv_log()
+
+    total_counters = _new_counters()
+
+    while not _shutdown:
+        batch_counters = _new_counters()
+
+        try:
+            conn = connect_gmail()
+            status, _ = conn.select(f'"{mailbox}"' if " " in mailbox else mailbox)
+            if status != "OK":
+                logger.error("Could not open mailbox '%s'.", mailbox)
+                time.sleep(REALTIME_POLL_INTERVAL)
+                continue
+
+            # Search for UNSEEN (unread) emails
+            status, msg_ids = conn.uid("SEARCH", None, "UNSEEN")
+            if status != "OK" or not msg_ids or not msg_ids[0]:
+                logger.info("No new emails. Waiting %ds…", REALTIME_POLL_INTERVAL)
+            else:
+                uids = msg_ids[0].split()
+                logger.info("Found %d new email(s).", len(uids))
+
+                for uid in uids:
+                    if _shutdown:
+                        break
+                    status, raw = conn.uid("FETCH", uid, "(RFC822)")
+                    if status != "OK" or not raw or not raw[0]:
+                        continue
+                    raw_email = raw[0]
+                    if isinstance(raw_email, tuple):
+                        raw_bytes = raw_email[1]
+                    else:
+                        raw_bytes = raw_email  # type: ignore[assignment]
+
+                    msg = email.message_from_bytes(raw_bytes)
+                    try:
+                        process_email(
+                            msg, uid, conn, dry_run=dry_run, counters=batch_counters
+                        )
+                    except Exception:
+                        logger.exception("Error processing UID %s", uid)
+                        batch_counters["errors"] += 1
+
+                    time.sleep(0.3)
+
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn.logout()
+
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Connection error: %s. Retrying…", exc)
+
+        # Accumulate
+        for key in total_counters:
+            total_counters[key] += batch_counters[key]
+
+        if batch_counters["emails_scanned"] > 0:
+            print_summary(batch_counters)
+
+        if not _shutdown:
+            time.sleep(REALTIME_POLL_INTERVAL)
+
+    # Final summary
+    print("\n── Final totals ──")
+    print_summary(total_counters)
+
+    if ENABLE_STATISTICS:
+        generate_statistics()
 
 
 # ──────────────────────────────────────────────
@@ -458,9 +1015,24 @@ def main() -> None:
         default=None,
         help="Gmail label / mailbox to read from (overrides config).",
     )
+    parser.add_argument(
+        "--realtime",
+        action="store_true",
+        help="Real-time mode: keep polling for new emails.",
+    )
+    parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="Generate department statistics report and exit.",
+    )
     args = parser.parse_args()
 
     mailbox = args.label or MAILBOX
+
+    # Stats-only mode
+    if args.stats:
+        generate_statistics()
+        return
 
     if (
         GMAIL_ADDRESS == "your_email@gmail.com"
@@ -468,11 +1040,16 @@ def main() -> None:
     ):
         logger.error(
             "Gmail credentials not configured.  "
-            "Set GMAIL_ADDRESS and GMAIL_APP_PASSWORD in .env or config.py."
+            "Set gmail_email and app_password in config.json or "
+            "GMAIL_ADDRESS and GMAIL_APP_PASSWORD in .env."
         )
         sys.exit(1)
 
-    run(mailbox=mailbox, dry_run=args.dry_run)
+    # Real-time mode (CLI flag or config toggle)
+    if args.realtime or ENABLE_REAL_TIME:
+        run_realtime(mailbox=mailbox, dry_run=args.dry_run)
+    else:
+        run(mailbox=mailbox, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

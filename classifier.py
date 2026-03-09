@@ -3,11 +3,13 @@ AI-based role classifier.
 
 Strategy
 --------
-1. **Keyword match** – fast, free, checked first via KEYWORD_ROLE_MAP.
-2. **OpenAI (GPT)** – if no keyword hit and an API key is configured, sends the
+1. **Learned mappings** – if auto-learning is enabled, check ``learning_db.json``
+   for previously learned role→folder mappings first.
+2. **Keyword match** – fast, free, checked via ``KEYWORD_ROLE_MAP`` from config.
+3. **OpenAI (GPT)** – if no keyword hit and an API key is configured, sends the
    extracted role together with the full folder tree to the model and asks it to
    return the single best-matching folder path.
-3. **Fallback** – if everything fails (or confidence is low), returns the
+4. **Fallback** – if everything fails (or confidence is low), returns the
    Unsorted path so the resume is saved for manual review.
 """
 
@@ -17,10 +19,13 @@ import json
 import logging
 import re
 from difflib import SequenceMatcher
+from pathlib import Path
 from typing import Optional
 
 from config import (
+    ENABLE_AUTO_LEARNING,
     KEYWORD_ROLE_MAP,
+    LEARNING_DB_FILE,
     OPENAI_API_KEY,
     OPENAI_MODEL,
     YEAR,
@@ -36,15 +41,40 @@ logger = logging.getLogger("resume_sorter.classifier")
 # Patterns that commonly appear in application subjects / bodies
 _ROLE_PATTERNS: list[re.Pattern] = [
     re.compile(
-        r"(?:applying\s+for|application\s+for|applied\s+for)[:\s–—-]*(.+)", re.I
+        r"(?:applying\s+for|application\s+for|applied\s+for)[:\s\u2013\u2014-]*(.+)",
+        re.I,
     ),
-    re.compile(r"(?:job\s+application)[:\s–—-]*(.+)", re.I),
-    re.compile(r"(?:position\s+of|role\s+of)[:\s–—-]*(.+)", re.I),
-    re.compile(r"(?:interested\s+in\s+the\s+position\s+of)[:\s–—-]*(.+)", re.I),
-    re.compile(r"(?:apply\s+for\s+the\s+post\s+of)[:\s–—-]*(.+)", re.I),
-    re.compile(r"(?:post\s+of)[:\s–—-]*(.+)", re.I),
-    re.compile(r"(?:application\s*[-–—]\s*)(.+)", re.I),
+    re.compile(r"(?:job\s+application)[:\s\u2013\u2014-]*(.+)", re.I),
+    re.compile(r"(?:position\s+of|role\s+of)[:\s\u2013\u2014-]*(.+)", re.I),
+    re.compile(
+        r"(?:interested\s+in\s+the\s+position\s+of)[:\s\u2013\u2014-]*(.+)", re.I
+    ),
+    re.compile(r"(?:apply\s+for\s+the\s+post\s+of)[:\s\u2013\u2014-]*(.+)", re.I),
+    re.compile(r"(?:post\s+of)[:\s\u2013\u2014-]*(.+)", re.I),
+    re.compile(r"(?:application\s*[-\u2013\u2014]\s*)(.+)", re.I),
 ]
+
+
+def _clean_role(role: str) -> str:
+    """Remove noise prefixes/suffixes from an extracted role string."""
+    role = role.strip().rstrip(".")
+    # Strip leading noise like "the Post of", "the position of", "the post"
+    role = re.sub(
+        r"^\s*the\s+(post|position|role)\s+(?:(?:of|for)\s+)?",
+        "",
+        role,
+        flags=re.I,
+    ).strip()
+    # Strip trailing "at XYZ Corp" but keep dept qualifiers
+    role = re.sub(
+        r"\s+(?:at|@)\s+(?!cse|ece|eee|ce|bm|bt|ash).*$",
+        "",
+        role,
+        flags=re.I,
+    )
+    # Strip trailing "-Reg", "- Reg"
+    role = re.sub(r"\s*-\s*Reg\s*$", "", role, flags=re.I)
+    return role.strip()
 
 
 def extract_role(subject: str, body: str = "", filename: str = "") -> str:
@@ -54,25 +84,19 @@ def extract_role(subject: str, body: str = "", filename: str = "") -> str:
     Returns the best candidate string (may still need classification) or an
     empty string if nothing useful is found.
     """
-    # 1. Try regex patterns on subject first, then body
-    for text in [subject, body]:
+    # Strip Fwd:/Re: prefixes from subject for matching
+    clean_subj = re.sub(r"^(re|fwd?)\s*:\s*", "", subject, flags=re.I).strip()
+
+    # 1. Try regex patterns on cleaned subject first, then body
+    for text in [clean_subj, body]:
         for pat in _ROLE_PATTERNS:
             m = pat.search(text)
             if m:
-                role = m.group(1).strip().rstrip(".")
-                # Remove trailing noise like "at XYZ Corp" but keep
-                # department qualifiers like "in Mechanical Engineering"
-                role = re.sub(
-                    r"\s+(?:at|@)\s+(?!cse|ece|eee|ce|bm|bt|ash).*$",
-                    "",
-                    role,
-                    flags=re.I,
-                )
+                role = _clean_role(m.group(1))
                 if role:
                     return role
 
-    # 2. If subject looks like a role itself (short, no "fw:"/"re:" prefix)
-    clean_subj = re.sub(r"^(re|fwd?)\s*:\s*", "", subject, flags=re.I).strip()
+    # 2. If subject looks like a role itself (short)
     if 2 < len(clean_subj.split()) <= 8:
         return clean_subj
 
@@ -87,6 +111,53 @@ def extract_role(subject: str, body: str = "", filename: str = "") -> str:
 
 
 # ──────────────────────────────────────────────
+# Auto-learning database
+# ──────────────────────────────────────────────
+
+
+def _load_learning_db() -> dict[str, str]:
+    """Load learned role→folder mappings from learning_db.json."""
+    if not LEARNING_DB_FILE.exists():
+        return {}
+    try:
+        with open(LEARNING_DB_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Could not load learning DB: %s", exc)
+        return {}
+
+
+def save_learning_db(db: dict[str, str]) -> None:
+    """Persist the learning database to disk."""
+    LEARNING_DB_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(LEARNING_DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(db, f, indent=2, ensure_ascii=False)
+
+
+def add_learned_mapping(role: str, folder: str) -> None:
+    """Record a new role→folder mapping in the learning database."""
+    db = _load_learning_db()
+    norm = _normalise(role)
+    if norm and norm not in db:
+        db[norm] = folder
+        save_learning_db(db)
+        logger.info("Learned mapping: '%s' → %s", norm, folder)
+
+
+def classify_by_learning(role: str) -> Optional[str]:
+    """Check the learning DB for a previously learned classification."""
+    if not ENABLE_AUTO_LEARNING:
+        return None
+    db = _load_learning_db()
+    norm = _normalise(role)
+    if norm in db:
+        folder = db[norm]
+        logger.info("Learned match: '%s' → %s", role, folder)
+        return folder
+    return None
+
+
+# ──────────────────────────────────────────────
 # Keyword-based classifier
 # ──────────────────────────────────────────────
 
@@ -94,7 +165,7 @@ def extract_role(subject: str, body: str = "", filename: str = "") -> str:
 def _normalise(text: str) -> str:
     """Lower-case, collapse whitespace, strip punctuation except &."""
     text = text.lower().strip()
-    text = re.sub(r"[–—\-]+", " ", text)
+    text = re.sub(r"[\u2013\u2014\-]+", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text
 
@@ -178,7 +249,7 @@ def classify_by_ai(role: str) -> Optional[str]:
         return None
 
     all_folders = get_all_folder_paths()
-    user_prompt = f"Role: {role}\n\n" f"Available folders:\n" + "\n".join(all_folders)
+    user_prompt = f"Role: {role}\n\nAvailable folders:\n" + "\n".join(all_folders)
 
     try:
         client = OpenAI(api_key=OPENAI_API_KEY)
@@ -208,7 +279,8 @@ def classify_by_ai(role: str) -> Optional[str]:
             return folder
 
         logger.warning(
-            "AI confidence too low or folder invalid for role '%s' (confidence=%.2f, folder=%s)",
+            "AI confidence too low or folder invalid for role '%s' "
+            "(confidence=%.2f, folder=%s)",
             role,
             confidence,
             folder,
@@ -235,6 +307,11 @@ def classify_role(role: str) -> str:
     if not role:
         logger.info("No role detected – filing under Unsorted.")
         return f"{YEAR}/Unsorted"
+
+    # Step 0 – check learned mappings (auto-learning)
+    folder = classify_by_learning(role)
+    if folder:
+        return folder
 
     # Step 1 – keyword lookup (free & instant)
     folder = classify_by_keyword(role)

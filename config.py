@@ -1,77 +1,150 @@
 """
 Configuration for the Resume Sorter application.
 
-Edit the values below or override them via a .env file placed next to this script.
+Loads settings from ``config.json`` (user-editable) with optional overrides
+from a ``.env`` file for secrets (gmail password, OpenAI key).
 """
 
+from __future__ import annotations
+
+import json
 import os
+import sys
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # ──────────────────────────────────────────────
-# Gmail credentials
+# Load config.json
 # ──────────────────────────────────────────────
-GMAIL_ADDRESS: str = os.getenv("GMAIL_ADDRESS", "your_email@gmail.com")
-GMAIL_APP_PASSWORD: str = os.getenv("GMAIL_APP_PASSWORD", "your_app_password")
 
-# IMAP settings
+_CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
+
+
+def _load_config() -> dict:
+    """Load config.json and return as dict.  Exit with error if missing."""
+    if not _CONFIG_PATH.exists():
+        print(
+            f"ERROR: config.json not found at {_CONFIG_PATH}\n"
+            "Create a config.json file with your settings.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+_cfg = _load_config()
+
+# ──────────────────────────────────────────────
+# Gmail credentials  (.env overrides config.json)
+# ──────────────────────────────────────────────
+GMAIL_ADDRESS: str = os.getenv("GMAIL_ADDRESS") or _cfg.get(
+    "gmail_email", "your_email@gmail.com"
+)
+GMAIL_APP_PASSWORD: str = os.getenv("GMAIL_APP_PASSWORD") or _cfg.get(
+    "app_password", "your_app_password"
+)
+
+# IMAP settings (fixed for Gmail)
 IMAP_SERVER: str = "imap.gmail.com"
 IMAP_PORT: int = 993
 
-# Gmail label / mailbox to read from.  Use "INBOX" or a custom label.
-MAILBOX: str = os.getenv("MAILBOX", "INBOX")
+# Gmail label / mailbox to read from.
+MAILBOX: str = os.getenv("MAILBOX") or _cfg.get("mailbox", "INBOX")
 
-# Label to move processed emails to (will be created if missing).
-PROCESSED_LABEL: str = "Processed Applications"
+# Label to move processed emails to.
+PROCESSED_LABEL: str = _cfg.get("processed_label", "Processed Applications")
 
 # ──────────────────────────────────────────────
-# OpenAI API key (for AI-based classification)
+# OpenAI API key (.env overrides config.json)
 # ──────────────────────────────────────────────
-OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY") or _cfg.get("openai_api_key", "")
+OPENAI_MODEL: str = os.getenv("OPENAI_MODEL") or _cfg.get(
+    "openai_model", "gpt-4o-mini"
+)
 
 # ──────────────────────────────────────────────
 # File-system paths
 # ──────────────────────────────────────────────
 BASE_DIR: Path = Path(
-    os.getenv("BASE_DIR", Path(__file__).resolve().parent / "Resumes")
+    os.getenv("BASE_DIR")
+    or _cfg.get("base_folder", str(Path(__file__).resolve().parent / "Resumes"))
 )
-UNSORTED_DIR: Path = BASE_DIR / "2026" / "Unsorted"
+YEAR: str = _cfg.get("year", "2026")
+UNSORTED_DIR: Path = BASE_DIR / YEAR / "Unsorted"
 LOG_FILE: Path = BASE_DIR / "processing_log.csv"
+HASHES_FILE: Path = BASE_DIR / "hashes.json"
+LEARNING_DB_FILE: Path = BASE_DIR / "learning_db.json"
+ERROR_LOG_FILE: Path = BASE_DIR / "Errors" / "error_log.csv"
+INVALID_DIR: Path = BASE_DIR / "Invalid_Resumes"
+ERRORS_DIR: Path = BASE_DIR / "Errors"
+DEPARTMENT_REPORT_FILE: Path = BASE_DIR / "department_report.csv"
 
 # ──────────────────────────────────────────────
 # Accepted resume file extensions
 # ──────────────────────────────────────────────
-ACCEPTED_EXTENSIONS: set = {".pdf", ".doc", ".docx"}
+ACCEPTED_EXTENSIONS: set = set(
+    _cfg.get("accepted_extensions", [".pdf", ".doc", ".docx"])
+)
+
+# ──────────────────────────────────────────────
+# Email subject filtering keywords
+# ──────────────────────────────────────────────
+ALLOWED_SUBJECT_KEYWORDS: list[str] = _cfg.get("allowed_subject_keywords", [])
+
+# ──────────────────────────────────────────────
+# Real-time polling interval
+# ──────────────────────────────────────────────
+REALTIME_POLL_INTERVAL: int = _cfg.get("realtime_poll_interval_seconds", 60)
+
+# ──────────────────────────────────────────────
+# Feature toggles
+# ──────────────────────────────────────────────
+ENABLE_REAL_TIME: bool = _cfg.get("enable_real_time", False)
+ENABLE_RESUME_AI: bool = _cfg.get("enable_resume_ai", False)
+ENABLE_LOGGING: bool = _cfg.get("enable_logging", True)
+ENABLE_DUPLICATE_CHECK: bool = _cfg.get("enable_duplicate_check", True)
+ENABLE_SUBJECT_FILTER: bool = _cfg.get("enable_subject_filter", False)
+ENABLE_AUTO_LEARNING: bool = _cfg.get("enable_auto_learning", False)
+ENABLE_STATISTICS: bool = _cfg.get("enable_statistics", True)
 
 # ──────────────────────────────────────────────
 # Organisational folder structure (year/dept/sub)
 # ──────────────────────────────────────────────
-FOLDER_STRUCTURE: dict = {
-    "ASH": ["Chemistry", "Economics", "English", "Maths", "Mechanical", "Physics"],
-    "BM": ["Faculty", "Lab"],
-    "BT": ["Faculty", "Lab"],
-    "CE": ["Faculty", "Lab"],
-    "CSE": ["Faculty", "Lab"],
-    "Dean": [
-        "Administration",
-        "Consultancy & Industry Connect",
-        "Dean PG",
-        "Dean UG",
-        "Placement & Career Guidance",
-        "Planning",
-        "Research",
-        "Student Affairs",
-    ],
-    "ECE": ["Faculty", "Lab"],
-    "EEE": ["Faculty", "Lab"],
-    "Librarian": [],
-    "Physical Education": [],
-}
-
-YEAR: str = "2026"
+FOLDER_STRUCTURE: dict = _cfg.get(
+    "folder_structure",
+    {
+        "ASH": [
+            "Chemistry",
+            "Economics",
+            "English",
+            "Maths",
+            "Mechanical",
+            "Physics",
+        ],
+        "BM": ["Faculty", "Lab"],
+        "BT": ["Faculty", "Lab"],
+        "CE": ["Faculty", "Lab"],
+        "CSE": ["Faculty", "Lab"],
+        "Dean": [
+            "Administration",
+            "Consultancy & Industry Connect",
+            "Dean PG",
+            "Dean UG",
+            "Placement & Career Guidance",
+            "Planning",
+            "Research",
+            "Student Affairs",
+        ],
+        "ECE": ["Faculty", "Lab"],
+        "EEE": ["Faculty", "Lab"],
+        "Librarian": [],
+        "Physical Education": [],
+    },
+)
 
 
 def get_all_folder_paths() -> list[str]:
@@ -87,106 +160,20 @@ def get_all_folder_paths() -> list[str]:
 
 
 # ──────────────────────────────────────────────
-# Quick keyword → folder mapping (checked BEFORE
-# the AI classifier for instant, zero-cost matches)
+# Quick keyword → folder mapping
+# Loaded from config.json; paths are prefixed with YEAR automatically.
 # ──────────────────────────────────────────────
-KEYWORD_ROLE_MAP: dict[str, str] = {
-    # CSE
-    "software engineer": f"{YEAR}/CSE/Faculty",
-    "data analyst": f"{YEAR}/CSE/Faculty",
-    "web developer": f"{YEAR}/CSE/Faculty",
-    "assistant professor cse": f"{YEAR}/CSE/Faculty",
-    "assistant professor - cse": f"{YEAR}/CSE/Faculty",
-    "assistant professor – cse": f"{YEAR}/CSE/Faculty",
-    "professor cse": f"{YEAR}/CSE/Faculty",
-    "cse faculty": f"{YEAR}/CSE/Faculty",
-    "cse lab": f"{YEAR}/CSE/Lab",
-    "lab technician cse": f"{YEAR}/CSE/Lab",
-    # ECE
-    "embedded engineer": f"{YEAR}/ECE/Faculty",
-    "assistant professor ece": f"{YEAR}/ECE/Faculty",
-    "assistant professor - ece": f"{YEAR}/ECE/Faculty",
-    "assistant professor – ece": f"{YEAR}/ECE/Faculty",
-    "professor ece": f"{YEAR}/ECE/Faculty",
-    "ece faculty": f"{YEAR}/ECE/Faculty",
-    "ece lab": f"{YEAR}/ECE/Lab",
-    "lab technician ece": f"{YEAR}/ECE/Lab",
-    "lab technician – ece": f"{YEAR}/ECE/Lab",
-    # EEE
-    "assistant professor eee": f"{YEAR}/EEE/Faculty",
-    "assistant professor - eee": f"{YEAR}/EEE/Faculty",
-    "assistant professor – eee": f"{YEAR}/EEE/Faculty",
-    "professor eee": f"{YEAR}/EEE/Faculty",
-    "eee faculty": f"{YEAR}/EEE/Faculty",
-    "eee lab": f"{YEAR}/EEE/Lab",
-    "lab technician eee": f"{YEAR}/EEE/Lab",
-    "lab technician – eee": f"{YEAR}/EEE/Lab",
-    # CE
-    "assistant professor ce": f"{YEAR}/CE/Faculty",
-    "assistant professor - ce": f"{YEAR}/CE/Faculty",
-    "assistant professor – ce": f"{YEAR}/CE/Faculty",
-    "civil engineering": f"{YEAR}/CE/Faculty",
-    "ce faculty": f"{YEAR}/CE/Faculty",
-    "ce lab": f"{YEAR}/CE/Lab",
-    "lab technician ce": f"{YEAR}/CE/Lab",
-    "lab technician – ce": f"{YEAR}/CE/Lab",
-    # BM
-    "assistant professor bm": f"{YEAR}/BM/Faculty",
-    "biomedical": f"{YEAR}/BM/Faculty",
-    "bm faculty": f"{YEAR}/BM/Faculty",
-    "bm lab": f"{YEAR}/BM/Lab",
-    "lab technician bm": f"{YEAR}/BM/Lab",
-    "lab technician – bm": f"{YEAR}/BM/Lab",
-    # BT
-    "assistant professor bt": f"{YEAR}/BT/Faculty",
-    "biotechnology": f"{YEAR}/BT/Faculty",
-    "bt faculty": f"{YEAR}/BT/Faculty",
-    "bt lab": f"{YEAR}/BT/Lab",
-    "lab technician bt": f"{YEAR}/BT/Lab",
-    "lab technician – bt": f"{YEAR}/BT/Lab",
-    # ASH
-    "assistant professor in chemistry": f"{YEAR}/ASH/Chemistry",
-    "faculty position in chemistry": f"{YEAR}/ASH/Chemistry",
-    "chemistry": f"{YEAR}/ASH/Chemistry",
-    "professor chemistry": f"{YEAR}/ASH/Chemistry",
-    "economics": f"{YEAR}/ASH/Economics",
-    "professor economics": f"{YEAR}/ASH/Economics",
-    "english": f"{YEAR}/ASH/English",
-    "professor english": f"{YEAR}/ASH/English",
-    "maths": f"{YEAR}/ASH/Maths",
-    "mathematics": f"{YEAR}/ASH/Maths",
-    "professor maths": f"{YEAR}/ASH/Maths",
-    "mechanical": f"{YEAR}/ASH/Mechanical",
-    "professor mechanical": f"{YEAR}/ASH/Mechanical",
-    "mechanical engineering": f"{YEAR}/ASH/Mechanical",
-    "faculty position in mechanical engineering department": f"{YEAR}/ASH/Mechanical",
-    "faculty position in mechanical engineering": f"{YEAR}/ASH/Mechanical",
-    "faculty mechanical engineering": f"{YEAR}/ASH/Mechanical",
-    "physics": f"{YEAR}/ASH/Physics",
-    "professor physics": f"{YEAR}/ASH/Physics",
-    # Dean offices
-    "administration": f"{YEAR}/Dean/Administration",
-    "admin officer": f"{YEAR}/Dean/Administration",
-    "hostel warden": f"{YEAR}/Dean/Student Affairs",
-    "student affairs": f"{YEAR}/Dean/Student Affairs",
-    "placement officer": f"{YEAR}/Dean/Placement & Career Guidance",
-    "placement": f"{YEAR}/Dean/Placement & Career Guidance",
-    "career guidance": f"{YEAR}/Dean/Placement & Career Guidance",
-    "consultancy": f"{YEAR}/Dean/Consultancy & Industry Connect",
-    "industry connect": f"{YEAR}/Dean/Consultancy & Industry Connect",
-    "dean pg": f"{YEAR}/Dean/Dean PG",
-    "dean ug": f"{YEAR}/Dean/Dean UG",
-    "research associate": f"{YEAR}/Dean/Research",
-    "research officer": f"{YEAR}/Dean/Research",
-    "research": f"{YEAR}/Dean/Research",
-    "planning": f"{YEAR}/Dean/Planning",
-    "planning officer": f"{YEAR}/Dean/Planning",
-    # Standalone
-    "librarian": f"{YEAR}/Librarian",
-    "library assistant": f"{YEAR}/Librarian",
-    "library": f"{YEAR}/Librarian",
-    "physical education": f"{YEAR}/Physical Education",
-    "sports officer": f"{YEAR}/Physical Education",
-    "physical director": f"{YEAR}/Physical Education",
-    "gym instructor": f"{YEAR}/Physical Education",
-}
+_raw_keyword_map: dict[str, str] = _cfg.get("keyword_role_map", {})
+
+KEYWORD_ROLE_MAP: dict[str, str] = {}
+for _kw, _path in _raw_keyword_map.items():
+    # If the path already starts with the year, use as-is; otherwise prepend YEAR
+    if _path.startswith(f"{YEAR}/"):
+        KEYWORD_ROLE_MAP[_kw] = _path
+    else:
+        KEYWORD_ROLE_MAP[_kw] = f"{YEAR}/{_path}"
+
+
+def get_config() -> dict:
+    """Return the full raw configuration dictionary."""
+    return _cfg.copy()
