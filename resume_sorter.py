@@ -340,7 +340,9 @@ def _extract_name_from_filename(filename: str) -> str:
     # Remove month abbreviations (with optional trailing digits) and pure numbers
     name_part = re.sub(
         r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\d*\b",
-        "", name_part, flags=re.I,
+        "",
+        name_part,
+        flags=re.I,
     )
     name_part = re.sub(r"\b\d{2,4}\b", "", name_part)
     # Collapse whitespace
@@ -577,16 +579,20 @@ def process_email(
     for filename, data in valid_attachments:
         try:
             _process_single_attachment(
-                filename, data, from_header, email_addr, subject, body,
-                dry_run, counters,
+                filename,
+                data,
+                from_header,
+                email_addr,
+                subject,
+                body,
+                dry_run,
+                counters,
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("  Error processing attachment '%s': %s", filename, exc)
             counters["errors"] += 1
             log_error(from_header, filename, str(exc))
-            log_to_csv(
-                from_header, email_addr, "", "", "", "", filename, "ERROR"
-            )
+            log_to_csv(from_header, email_addr, "", "", "", "", filename, "ERROR")
 
     # ── Move email to processed label (unless dry-run) ──
     if not dry_run:
@@ -660,18 +666,28 @@ def _process_single_attachment(
         dept_label = folder_rel.replace(f"{YEAR}/", "")
         logger.info("  [DRY-RUN] Would save: %s → %s", candidate_name, dept_label)
         log_to_csv(
-            from_header, email_addr, candidate_name,
-            detected_role or "(none)", folder_rel,
-            str(dest_path), filename, "DRY_RUN",
+            from_header,
+            email_addr,
+            candidate_name,
+            detected_role or "(none)",
+            folder_rel,
+            str(dest_path),
+            filename,
+            "DRY_RUN",
         )
     else:
         dest_path.write_bytes(data)
         logger.info("  ✓  Saved: %s", dest_path.name)
         counters["resumes_downloaded"] += 1
         log_to_csv(
-            from_header, email_addr, candidate_name,
-            detected_role or "(none)", folder_rel,
-            str(dest_path), filename, "SAVED",
+            from_header,
+            email_addr,
+            candidate_name,
+            detected_role or "(none)",
+            folder_rel,
+            str(dest_path),
+            filename,
+            "SAVED",
         )
 
 
@@ -759,13 +775,18 @@ def learn_from_manual_moves() -> int:
             # Search for the file in department folders
             for dept, subs in FOLDER_STRUCTURE.items():
                 folders_to_check = (
-                    [BASE_DIR / YEAR / dept] if not subs
+                    [BASE_DIR / YEAR / dept]
+                    if not subs
                     else [BASE_DIR / YEAR / dept / sub for sub in subs]
                 )
                 for folder in folders_to_check:
                     candidate = folder / unsorted_file.name
                     if candidate.exists():
-                        new_folder = f"{YEAR}/{dept}" if not subs else f"{YEAR}/{dept}/{folder.name}"
+                        new_folder = (
+                            f"{YEAR}/{dept}"
+                            if not subs
+                            else f"{YEAR}/{dept}/{folder.name}"
+                        )
                         add_learned_mapping(role, new_folder)
                         learned += 1
                         break
@@ -919,7 +940,9 @@ def run_realtime(mailbox: str, dry_run: bool = False) -> None:
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
-    logger.info("Starting real-time monitoring (poll every %ds)…", REALTIME_POLL_INTERVAL)
+    logger.info(
+        "Starting real-time monitoring (poll every %ds)…", REALTIME_POLL_INTERVAL
+    )
     logger.info("Press Ctrl+C to stop.\n")
 
     create_folder_tree()
