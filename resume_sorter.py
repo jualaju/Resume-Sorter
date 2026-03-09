@@ -180,16 +180,32 @@ def compute_file_hash(data: bytes) -> str:
 
 
 def is_duplicate(data: bytes, filename: str, email_from: str) -> bool:
-    """Check if this file has been seen before. Records it if new."""
+    """Check if this file has been seen before. Records it if new.
+
+    Uses two checks:
+      1. SHA-256 hash match (identical content)
+      2. filename + sender email match (same file from same person)
+    """
     if not ENABLE_DUPLICATE_CHECK:
         return False
     file_hash = compute_file_hash(data)
     hashes = _load_hashes()
+    # Check 1: SHA-256 hash match
     if file_hash in hashes:
         logger.info(
             "  ⊘  Duplicate detected (SHA-256 match): %s", hashes[file_hash]["filename"]
         )
         return True
+    # Check 2: filename + email match
+    for existing in hashes.values():
+        if (
+            existing.get("filename") == filename
+            and existing.get("email_from") == email_from
+        ):
+            logger.info(
+                "  ⊘  Duplicate detected (filename + sender match): %s", filename
+            )
+            return True
     # Record new hash
     hashes[file_hash] = {
         "filename": filename,
@@ -593,6 +609,14 @@ def process_email(
             counters["errors"] += 1
             log_error(from_header, filename, str(exc))
             log_to_csv(from_header, email_addr, "", "", "", "", filename, "ERROR")
+            # Save the problematic file to Errors/ folder
+            if not dry_run:
+                try:
+                    err_dest = deduplicate_path(ERRORS_DIR / filename)
+                    err_dest.write_bytes(data)
+                    logger.info("  Saved error file to: %s", err_dest)
+                except Exception:  # noqa: BLE001
+                    pass
 
     # ── Move email to processed label (unless dry-run) ──
     if not dry_run:
@@ -713,6 +737,22 @@ def _ensure_label(imap_conn: imaplib.IMAP4_SSL, label: str) -> None:
                 logger.info("Created Gmail label: %s", label)
     except Exception as exc:  # noqa: BLE001
         logger.debug("Could not check/create label '%s': %s", label, exc)
+
+
+def _has_processed_label(imap_conn: imaplib.IMAP4_SSL, uid: bytes) -> bool:
+    """Check if the email already has the processed label."""
+    try:
+        status, data = imap_conn.uid("FETCH", uid, "(X-GM-LABELS)")
+        if status == "OK" and data and data[0]:
+            raw = data[0]
+            if isinstance(raw, tuple):
+                raw = raw[1]
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", errors="replace")
+            return PROCESSED_LABEL in str(raw)
+    except Exception:  # noqa: BLE001
+        pass
+    return False
 
 
 def _move_to_processed(imap_conn: imaplib.IMAP4_SSL, uid: bytes) -> None:
@@ -889,6 +929,10 @@ def run(mailbox: str, dry_run: bool = False) -> dict[str, int]:
                 logger.info("Shutting down gracefully…")
                 break
 
+            # Skip emails already labelled as processed
+            if _has_processed_label(conn, uid):
+                continue
+
             status, raw = conn.uid("FETCH", uid, "(RFC822)")
             if status != "OK" or not raw or not raw[0]:
                 logger.warning("Failed to fetch UID %s", uid)
@@ -972,6 +1016,9 @@ def run_realtime(mailbox: str, dry_run: bool = False) -> None:
                 for uid in uids:
                     if _shutdown:
                         break
+                    # Skip emails already labelled as processed
+                    if _has_processed_label(conn, uid):
+                        continue
                     status, raw = conn.uid("FETCH", uid, "(RFC822)")
                     if status != "OK" or not raw or not raw[0]:
                         continue
