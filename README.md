@@ -6,17 +6,17 @@ An automated Python tool that reads job application emails from Gmail, detects t
 
 ## Features
 
-| Feature | Description |
-|---|---|
-| **Gmail IMAP** | Secure connection via App Password |
-| **Role detection** | Regex extraction from subject / body / filename |
-| **Keyword classifier** | Instant, zero-cost mapping for common roles |
-| **AI classifier** | OpenAI GPT fallback for ambiguous roles |
-| **Resume download** | Supports PDF, DOC, DOCX |
-| **Smart naming** | `CandidateName_Role.pdf` with deduplication |
-| **CSV log** | Timestamped log of every processed email |
-| **Processed label** | Moves handled emails to *Processed Applications* |
-| **Dry-run mode** | Preview without downloading or moving |
+| Feature                | Description                                      |
+| ---------------------- | ------------------------------------------------ |
+| **Gmail IMAP**         | Secure connection via App Password               |
+| **Role detection**     | Regex extraction from subject / body / filename  |
+| **Keyword classifier** | Instant, zero-cost mapping for common roles      |
+| **AI classifier**      | OpenAI GPT fallback for ambiguous roles          |
+| **Resume download**    | Supports PDF, DOC, DOCX                          |
+| **Smart naming**       | `CandidateName_Role.pdf` with deduplication      |
+| **CSV log**            | Timestamped log of every processed email         |
+| **Processed label**    | Moves handled emails to _Processed Applications_ |
+| **Dry-run mode**       | Preview without downloading or moving            |
 
 ---
 
@@ -42,7 +42,7 @@ pip install -r requirements.txt
 ### 3. Enable IMAP in Gmail
 
 1. Open Gmail → ⚙ Settings → **See all settings** → **Forwarding and POP/IMAP** tab.
-2. Under *IMAP access*, select **Enable IMAP**.
+2. Under _IMAP access_, select **Enable IMAP**.
 3. Save changes.
 
 ### 4. Configure credentials
@@ -152,14 +152,14 @@ Email arrives
 
 ### Example classifications
 
-| Input Role | Output Folder |
-|---|---|
-| Assistant Professor – CSE | `2026/CSE/Faculty/` |
-| Lab Technician – ECE | `2026/ECE/Lab/` |
-| Hostel Warden | `2026/Dean/Student Affairs/` |
-| Placement Officer | `2026/Dean/Placement & Career Guidance/` |
-| Library Assistant | `2026/Librarian/` |
-| Research Associate | `2026/Dean/Research/` |
+| Input Role                | Output Folder                            |
+| ------------------------- | ---------------------------------------- |
+| Assistant Professor – CSE | `2026/CSE/Faculty/`                      |
+| Lab Technician – ECE      | `2026/ECE/Lab/`                          |
+| Hostel Warden             | `2026/Dean/Student Affairs/`             |
+| Placement Officer         | `2026/Dean/Placement & Career Guidance/` |
+| Library Assistant         | `2026/Librarian/`                        |
+| Research Associate        | `2026/Dean/Research/`                    |
 
 ---
 
@@ -167,9 +167,9 @@ Email arrives
 
 Every run appends to `Resumes/processing_log.csv`:
 
-| timestamp | email_from | candidate_name | detected_role | classification_result | destination_folder | filename | status |
-|---|---|---|---|---|---|---|---|
-| 2026-03-09T10:30:00 | john@gmail.com | John Doe | Assistant Professor – CSE | 2026/CSE/Faculty | .../John_Doe_Assistant_Professor_CSE.pdf | resume.pdf | SAVED |
+| timestamp           | email_from     | candidate_name | detected_role             | classification_result | destination_folder                       | filename   | status |
+| ------------------- | -------------- | -------------- | ------------------------- | --------------------- | ---------------------------------------- | ---------- | ------ |
+| 2026-03-09T10:30:00 | john@gmail.com | John Doe       | Assistant Professor – CSE | 2026/CSE/Faculty      | .../John_Doe_Assistant_Professor_CSE.pdf | resume.pdf | SAVED  |
 
 ---
 
@@ -177,16 +177,16 @@ Every run appends to `Resumes/processing_log.csv`:
 
 All settings live in `config.py` (or override via `.env`):
 
-| Variable | Description | Default |
-|---|---|---|
-| `GMAIL_ADDRESS` | Gmail address | — |
-| `GMAIL_APP_PASSWORD` | 16-char app password | — |
-| `MAILBOX` | IMAP mailbox to read | `INBOX` |
-| `PROCESSED_LABEL` | Label for processed emails | `Processed Applications` |
-| `OPENAI_API_KEY` | OpenAI key (optional) | `""` |
-| `OPENAI_MODEL` | Model name | `gpt-4o-mini` |
-| `BASE_DIR` | Root folder for resume tree | `./Resumes` |
-| `ACCEPTED_EXTENSIONS` | Allowed file types | `.pdf`, `.doc`, `.docx` |
+| Variable              | Description                 | Default                  |
+| --------------------- | --------------------------- | ------------------------ |
+| `GMAIL_ADDRESS`       | Gmail address               | —                        |
+| `GMAIL_APP_PASSWORD`  | 16-char app password        | —                        |
+| `MAILBOX`             | IMAP mailbox to read        | `INBOX`                  |
+| `PROCESSED_LABEL`     | Label for processed emails  | `Processed Applications` |
+| `OPENAI_API_KEY`      | OpenAI key (optional)       | `""`                     |
+| `OPENAI_MODEL`        | Model name                  | `gpt-4o-mini`            |
+| `BASE_DIR`            | Root folder for resume tree | `./Resumes`              |
+| `ACCEPTED_EXTENSIONS` | Allowed file types          | `.pdf`, `.doc`, `.docx`  |
 
 ### Adding custom role → folder mappings
 
@@ -200,13 +200,13 @@ KEYWORD_ROLE_MAP["network engineer"] = f"{YEAR}/CSE/Faculty"
 
 ## Troubleshooting
 
-| Problem | Solution |
-|---|---|
-| `AUTHENTICATIONFAILED` | Double-check App Password; ensure IMAP is enabled |
-| No emails found | Verify `MAILBOX` value; try `"INBOX"` |
-| Role goes to Unsorted | Add a keyword mapping in `config.py` or enable OpenAI |
-| `openai` import error | Run `pip install openai` |
-| Permission denied on folders | Check write permissions on `BASE_DIR` |
+| Problem                      | Solution                                              |
+| ---------------------------- | ----------------------------------------------------- |
+| `AUTHENTICATIONFAILED`       | Double-check App Password; ensure IMAP is enabled     |
+| No emails found              | Verify `MAILBOX` value; try `"INBOX"`                 |
+| Role goes to Unsorted        | Add a keyword mapping in `config.py` or enable OpenAI |
+| `openai` import error        | Run `pip install openai`                              |
+| Permission denied on folders | Check write permissions on `BASE_DIR`                 |
 
 ---
 

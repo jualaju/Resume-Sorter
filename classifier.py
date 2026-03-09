@@ -23,7 +23,6 @@ from config import (
     KEYWORD_ROLE_MAP,
     OPENAI_API_KEY,
     OPENAI_MODEL,
-    UNSORTED_DIR,
     YEAR,
     get_all_folder_paths,
 )
@@ -36,7 +35,9 @@ logger = logging.getLogger("resume_sorter.classifier")
 
 # Patterns that commonly appear in application subjects / bodies
 _ROLE_PATTERNS: list[re.Pattern] = [
-    re.compile(r"(?:applying\s+for|application\s+for|applied\s+for)[:\s–—-]*(.+)", re.I),
+    re.compile(
+        r"(?:applying\s+for|application\s+for|applied\s+for)[:\s–—-]*(.+)", re.I
+    ),
     re.compile(r"(?:job\s+application)[:\s–—-]*(.+)", re.I),
     re.compile(r"(?:position\s+of|role\s+of)[:\s–—-]*(.+)", re.I),
     re.compile(r"(?:interested\s+in\s+the\s+position\s+of)[:\s–—-]*(.+)", re.I),
@@ -63,7 +64,9 @@ def extract_role(subject: str, body: str = "", filename: str = "") -> str:
                 # department qualifiers like "in Mechanical Engineering"
                 role = re.sub(
                     r"\s+(?:at|@)\s+(?!cse|ece|eee|ce|bm|bt|ash).*$",
-                    "", role, flags=re.I,
+                    "",
+                    role,
+                    flags=re.I,
                 )
                 if role:
                     return role
@@ -120,7 +123,9 @@ def classify_by_keyword(role: str) -> Optional[str]:
             best_path = folder_path
 
     if best_path and best_score >= 0.45:
-        logger.info("Keyword match: '%s' → %s (score=%.2f)", role, best_path, best_score)
+        logger.info(
+            "Keyword match: '%s' → %s (score=%.2f)", role, best_path, best_score
+        )
         return best_path
 
     return None
@@ -173,10 +178,7 @@ def classify_by_ai(role: str) -> Optional[str]:
         return None
 
     all_folders = get_all_folder_paths()
-    user_prompt = (
-        f"Role: {role}\n\n"
-        f"Available folders:\n" + "\n".join(all_folders)
-    )
+    user_prompt = f"Role: {role}\n\n" f"Available folders:\n" + "\n".join(all_folders)
 
     try:
         client = OpenAI(api_key=OPENAI_API_KEY)

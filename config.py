@@ -35,7 +35,9 @@ OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 # ──────────────────────────────────────────────
 # File-system paths
 # ──────────────────────────────────────────────
-BASE_DIR: Path = Path(os.getenv("BASE_DIR", Path(__file__).resolve().parent / "Resumes"))
+BASE_DIR: Path = Path(
+    os.getenv("BASE_DIR", Path(__file__).resolve().parent / "Resumes")
+)
 UNSORTED_DIR: Path = BASE_DIR / "2026" / "Unsorted"
 LOG_FILE: Path = BASE_DIR / "processing_log.csv"
 

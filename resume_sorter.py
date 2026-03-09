@@ -22,7 +22,6 @@ import email.header
 import email.utils
 import imaplib
 import logging
-import os
 import re
 import sys
 import time
@@ -86,16 +85,18 @@ def _init_csv_log() -> None:
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(LOG_FILE, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                "timestamp",
-                "email_from",
-                "candidate_name",
-                "detected_role",
-                "classification_result",
-                "destination_folder",
-                "filename",
-                "status",
-            ])
+            writer.writerow(
+                [
+                    "timestamp",
+                    "email_from",
+                    "candidate_name",
+                    "detected_role",
+                    "classification_result",
+                    "destination_folder",
+                    "filename",
+                    "status",
+                ]
+            )
 
 
 def log_to_csv(
@@ -109,16 +110,18 @@ def log_to_csv(
 ) -> None:
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            datetime.now().isoformat(timespec="seconds"),
-            email_from,
-            candidate_name,
-            detected_role,
-            classification,
-            dest_folder,
-            filename,
-            status,
-        ])
+        writer.writerow(
+            [
+                datetime.now().isoformat(timespec="seconds"),
+                email_from,
+                candidate_name,
+                detected_role,
+                classification,
+                dest_folder,
+                filename,
+                status,
+            ]
+        )
 
 
 # ──────────────────────────────────────────────
@@ -342,7 +345,9 @@ def _ensure_label(imap_conn: imaplib.IMAP4_SSL, label: str) -> None:
                 if isinstance(item, bytes):
                     existing.append(item.decode("utf-8", errors="replace"))
             # Check if label already exists
-            label_exists = any(f'"{label}"' in entry or f" {label}" in entry for entry in existing)
+            label_exists = any(
+                f'"{label}"' in entry or f" {label}" in entry for entry in existing
+            )
             if not label_exists:
                 imap_conn.create(label)
                 logger.info("Created Gmail label: %s", label)
@@ -457,7 +462,10 @@ def main() -> None:
 
     mailbox = args.label or MAILBOX
 
-    if GMAIL_ADDRESS == "your_email@gmail.com" or GMAIL_APP_PASSWORD == "your_app_password":
+    if (
+        GMAIL_ADDRESS == "your_email@gmail.com"
+        or GMAIL_APP_PASSWORD == "your_app_password"
+    ):
         logger.error(
             "Gmail credentials not configured.  "
             "Set GMAIL_ADDRESS and GMAIL_APP_PASSWORD in .env or config.py."
