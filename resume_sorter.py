@@ -73,6 +73,7 @@ from config import (
     LEARNING_DB_FILE,
     LOG_FILE,
     MAILBOX,
+    MULTI_ATTACHMENT_REVIEW_FILE,
     PROCESSED_LABEL,
     REALTIME_POLL_INTERVAL,
     UNSORTED_DIR,
@@ -269,6 +270,57 @@ def log_to_csv(
                 dest_folder,
                 filename,
                 status,
+            ]
+        )
+
+
+_MULTI_ATTACHMENT_HEADERS = [
+    "timestamp",
+    "uid",
+    "message_id",
+    "email_from",
+    "email_address",
+    "subject",
+    "candidate_name",
+    "detected_role",
+    "attachment_names",
+    "status",
+]
+
+
+def _init_multi_attachment_review_log() -> None:
+    if not MULTI_ATTACHMENT_REVIEW_FILE.exists():
+        MULTI_ATTACHMENT_REVIEW_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(MULTI_ATTACHMENT_REVIEW_FILE, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(_MULTI_ATTACHMENT_HEADERS)
+
+
+def log_multi_attachment_review(
+    uid: bytes,
+    message_id: str,
+    email_from: str,
+    email_address: str,
+    subject: str,
+    candidate_name: str,
+    detected_role: str,
+    attachment_names: list[str],
+) -> None:
+    _init_multi_attachment_review_log()
+    with open(MULTI_ATTACHMENT_REVIEW_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                datetime.now().isoformat(timespec="seconds"),
+                uid.decode("utf-8", errors="replace"),
+                message_id,
+                email_from,
+                email_address,
+                subject,
+                candidate_name,
+                detected_role,
+                "; ".join(attachment_names),
+                "AMBIGUOUS_ATTACHMENT",
             ]
         )
 
@@ -509,51 +561,60 @@ _SUPPORT_DOC_PATTERNS = re.compile(
     r"(certificate|mark\s*sheet|grade|gate[\s_-]?\d|award|letter|"
     r"appointment|experience[\s_-]*(cert|letter)|transcript|"
     r"degree|diploma|scorecard|id[\s_-]*proof|passport|aadhaar|"
-    r"pan[\s_-]*card|photo|signature|recommend)", re.I
+    r"pan[\s_-]*card|photo|signature|recommend)",
+    re.I,
 )
 
 
 def _split_resume_and_docs(
     attachments: list[tuple[str, bytes]],
-) -> tuple[list[tuple[str, bytes]], list[tuple[str, bytes]]]:
-    """Split attachments into (resumes, supporting_docs).
+) -> tuple[Optional[tuple[str, bytes]], list[tuple[str, bytes]]]:
+    """Identify the single resume/CV from a list of attachments.
+
+    Returns (resume_or_none, other_attachments).
 
     Heuristic:
-      1. If a filename matches _RESUME_PATTERNS → resume.
-      2. If a filename matches _SUPPORT_DOC_PATTERNS → supporting doc.
-      3. If only one attachment, it's the resume.
-      4. If nothing matched, pick the largest file as the resume.
+      1. If only one attachment → it's the resume.
+      2. If a filename matches _RESUME_PATTERNS → that's the resume.
+      3. If a filename matches _SUPPORT_DOC_PATTERNS → it's a supporting doc.
+      4. If exactly one file is NOT a supporting doc → that's the resume.
+      5. If ambiguous (multiple unknowns, or all look like supporting docs)
+         → return None so the email goes to Unsorted for manual review.
     """
-    if len(attachments) <= 1:
-        return attachments, []
+    if len(attachments) == 1:
+        return attachments[0], []
 
-    resumes: list[tuple[str, bytes]] = []
+    resume_candidates: list[tuple[str, bytes]] = []
     docs: list[tuple[str, bytes]] = []
     unknown: list[tuple[str, bytes]] = []
 
     for filename, data in attachments:
         name_lower = Path(filename).stem.lower()
         if _RESUME_PATTERNS.search(name_lower):
-            resumes.append((filename, data))
+            resume_candidates.append((filename, data))
         elif _SUPPORT_DOC_PATTERNS.search(name_lower):
             docs.append((filename, data))
         else:
             unknown.append((filename, data))
 
-    # If no file was identified as a resume, pick the largest unknown file
-    if not resumes:
-        if unknown:
-            unknown.sort(key=lambda x: len(x[1]), reverse=True)
-            resumes.append(unknown.pop(0))
-        elif docs:
-            # All files look like supporting docs — pick the largest as resume
-            docs.sort(key=lambda x: len(x[1]), reverse=True)
-            resumes.append(docs.pop(0))
+    # Exactly one file explicitly looks like a resume
+    if len(resume_candidates) == 1:
+        others = docs + unknown + resume_candidates[1:]
+        return resume_candidates[0], others
 
-    # Remaining unknowns are supporting docs
-    docs.extend(unknown)
+    # No explicit resume match — if exactly one unknown file, that's the CV
+    if not resume_candidates and len(unknown) == 1:
+        return unknown[0], docs
 
-    return resumes, docs
+    # Multiple resume candidates — pick the largest by file size
+    if len(resume_candidates) > 1:
+        resume_candidates.sort(key=lambda x: len(x[1]), reverse=True)
+        others = docs + unknown + resume_candidates[1:]
+        return resume_candidates[0], others
+
+    # Ambiguous: multiple unknowns, or zero unknowns + all supporting docs
+    # → can't confidently identify the CV
+    return None, attachments
 
 
 # ──────────────────────────────────────────────
@@ -578,6 +639,7 @@ def process_email(
     subject = decode_header_value(msg.get("Subject", ""))
     body = get_body_text(msg)
     email_addr = extract_email_address(from_header)
+    message_id = decode_header_value(msg.get("Message-ID", ""))
 
     logger.info("── Processing email ──")
     logger.info("  From   : %s", from_header)
@@ -615,23 +677,15 @@ def process_email(
 
     # ── Handle invalid format attachments ──
     for filename, data in invalid_attachments:
-        logger.info("  ⚠  Invalid format: %s → saving to Invalid_Resumes/", filename)
+        logger.info("  ⚠  Invalid format skipped: %s", filename)
         counters["invalid_format"] += 1
-        if not dry_run:
-            try:
-                dest = deduplicate_path(INVALID_DIR / filename)
-                dest.write_bytes(data)
-            except Exception as exc:  # noqa: BLE001
-                logger.error("  Failed to save invalid file: %s", exc)
-                log_error(from_header, filename, str(exc))
-                counters["errors"] += 1
         log_to_csv(
             from_header,
             email_addr,
             "",
             "",
             "(invalid format)",
-            str(INVALID_DIR),
+            "",
             filename,
             "INVALID_FORMAT" if not dry_run else "DRY_RUN",
         )
@@ -653,33 +707,31 @@ def process_email(
             )
         return
 
-    # ── Separate resume(s) from supporting documents ──
-    resume_attachments, supporting_attachments = _split_resume_and_docs(
-        valid_attachments
-    )
-
-    # First, classify and save the resume attachment(s) — remember dest_dir
-    dest_dir_for_docs: Optional[Path] = None
-    for filename, data in resume_attachments:
+    # ── Multiple attachments: save all in a candidate-named subfolder ──
+    if len(valid_attachments) > 1:
         try:
-            saved_dir = _process_single_attachment(
-                filename,
-                data,
-                from_header,
-                email_addr,
-                subject,
-                body,
-                dry_run,
-                counters,
+            result_status = _process_multiple_attachments(
+                valid_attachments, from_header, email_addr,
+                subject, body, dry_run, counters,
             )
-            if saved_dir:
-                dest_dir_for_docs = saved_dir
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("  Error processing multiple attachments: %s", exc)
+            counters["errors"] += 1
+            log_error(from_header, ", ".join(f[0] for f in valid_attachments), str(exc))
+            result_status = "ERROR"
+    else:
+        # ── Single attachment ──
+        filename, data = valid_attachments[0]
+        try:
+            result_status = _process_single_attachment(
+                filename, data, from_header, email_addr,
+                subject, body, dry_run, counters,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.exception("  Error processing attachment '%s': %s", filename, exc)
             counters["errors"] += 1
             log_error(from_header, filename, str(exc))
             log_to_csv(from_header, email_addr, "", "", "", "", filename, "ERROR")
-            # Save the problematic file to Errors/ folder
             if not dry_run:
                 try:
                     err_dest = deduplicate_path(ERRORS_DIR / filename)
@@ -687,25 +739,141 @@ def process_email(
                     logger.info("  Saved error file to: %s", err_dest)
                 except Exception:  # noqa: BLE001
                     pass
+            result_status = "ERROR"
 
-    # Save supporting documents alongside the resume in the same folder
-    for filename, data in supporting_attachments:
+    # ── Label the email (unless dry-run) ──
+    if not dry_run:
+        if result_status == "UNSORTED":
+            _label_as_unsorted(imap_conn, uid)
+        else:
+            _move_to_processed(imap_conn, uid)
+
+
+def _classify_and_get_folder(
+    attachments: list[tuple[str, bytes]],
+    from_header: str,
+    subject: str,
+    body: str,
+) -> tuple[str, str, str]:
+    """Classify role and return (detected_role, folder_rel, candidate_name).
+
+    For multi-attachment emails, tries the resume-like attachment first for
+    content-based AI classification.
+    """
+    first_filename = attachments[0][0] if attachments else ""
+    detected_role = extract_role(subject, body, first_filename)
+    folder_rel = classify_role(detected_role)
+
+    # If Unsorted, try resume-content AI on the first resume-like attachment
+    if ENABLE_RESUME_AI and folder_rel == f"{YEAR}/Unsorted":
+        for fname, fdata in attachments:
+            ext = Path(fname).suffix.lower()
+            if ext in ACCEPTED_EXTENSIONS:
+                try:
+                    from resume_reader import detect_department_from_content, extract_text
+                    resume_text = extract_text(fdata, ext)
+                    ai_folder = detect_department_from_content(resume_text)
+                    if ai_folder:
+                        folder_rel = ai_folder
+                        logger.info("  Resume content override: %s", folder_rel)
+                        if ENABLE_AUTO_LEARNING and detected_role:
+                            add_learned_mapping(detected_role, folder_rel)
+                        break
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("  Resume AI reading failed: %s", exc)
+
+    candidate_name = extract_candidate_name(from_header, subject, first_filename)
+    return detected_role, folder_rel, candidate_name
+
+
+def _extract_profile_name(from_header: str) -> str:
+    """Extract the display name from the email From header (profile name)."""
+    display, addr = email.utils.parseaddr(from_header)
+    if display and not re.match(r"^[\w.+-]+@", display):
+        return display.strip()
+    # Fallback to email local part
+    if addr:
+        local = addr.split("@")[0]
+        local = re.sub(r"[\d_.\-]+", " ", local).strip()
+        if local:
+            return local.title()
+    return "Unknown"
+
+
+def _process_multiple_attachments(
+    attachments: list[tuple[str, bytes]],
+    from_header: str,
+    email_addr: str,
+    subject: str,
+    body: str,
+    dry_run: bool,
+    counters: dict[str, int],
+) -> str:
+    """Process multiple attachments: classify, create a candidate subfolder, save all.
+
+    Returns 'UNSORTED' if classified as unsorted (no download), else 'SAVED'/'DRY_RUN'.
+    """
+    detected_role, folder_rel, _ = _classify_and_get_folder(
+        attachments, from_header, subject, body,
+    )
+    # Use the email profile name for the folder
+    profile_name = _extract_profile_name(from_header)
+    logger.info("  Detected role: %s", detected_role or "(none)")
+    logger.info("  Classification: %s", folder_rel)
+    logger.info("  Applicant (profile): %s", profile_name)
+
+    # If Unsorted, don't download — label for manual review
+    if folder_rel.endswith("/Unsorted"):
+        counters["unsorted_resumes"] += 1
+        logger.info("  ⊘  Unsorted — skipping download, will label for manual review.")
+        log_to_csv(
+            from_header, email_addr, profile_name,
+            detected_role or "(none)", folder_rel, "",
+            "; ".join(f[0] for f in attachments), "UNSORTED",
+        )
+        return "UNSORTED"
+
+    # Create a subfolder named after the email profile name
+    candidate_folder_name = safe_filename(profile_name) or "Unknown"
+    dest_dir = BASE_DIR / folder_rel / candidate_folder_name
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_count = 0
+    for filename, data in attachments:
+        # Duplicate check per file
         if is_duplicate(data, filename, from_header):
             counters["duplicates_skipped"] += 1
+            logger.info("  ⊘  Duplicate skipped: %s", filename)
             continue
-        if dest_dir_for_docs and not dry_run:
-            try:
-                dest = deduplicate_path(dest_dir_for_docs / filename)
-                dest.write_bytes(data)
-                logger.info("  ✓  Supporting doc saved: %s", dest.name)
-            except Exception as exc:  # noqa: BLE001
-                logger.error("  Failed to save supporting doc: %s", exc)
-        elif dry_run:
-            logger.info("  [DRY-RUN] Would save supporting doc: %s", filename)
 
-    # ── Move email to processed label (unless dry-run) ──
+        dest_path = deduplicate_path(dest_dir / filename)
+
+        if dry_run:
+            dept_label = folder_rel.replace(f"{YEAR}/", "")
+            logger.info(
+                "  [DRY-RUN] Would save: %s → %s/%s",
+                filename, dept_label, candidate_folder_name,
+            )
+        else:
+            dest_path.write_bytes(data)
+            logger.info("  ✓  Saved: %s", dest_path.name)
+            saved_count += 1
+
     if not dry_run:
-        _move_to_processed(imap_conn, uid)
+        counters["resumes_downloaded"] += saved_count
+
+    status = "SAVED" if not dry_run else "DRY_RUN"
+    log_to_csv(
+        from_header, email_addr, profile_name,
+        detected_role or "(none)", folder_rel, str(dest_dir),
+        "; ".join(f[0] for f in attachments), status,
+    )
+    logger.info(
+        "  Saved %d attachment(s) to: %s/%s",
+        saved_count if not dry_run else len(attachments),
+        folder_rel, candidate_folder_name,
+    )
+    return status
 
 
 def _process_single_attachment(
@@ -717,10 +885,10 @@ def _process_single_attachment(
     body: str,
     dry_run: bool,
     counters: dict[str, int],
-) -> Optional[Path]:
+) -> str:
     """Process a single valid attachment: classify, deduplicate, save.
 
-    Returns the destination directory (Path) if the file was saved, or None.
+    Returns 'UNSORTED' if classified as unsorted (no download), else 'SAVED'/'DRY_RUN'/'DUPLICATE'.
     """
 
     # ── Duplicate check ──
@@ -729,7 +897,7 @@ def _process_single_attachment(
         log_to_csv(
             from_header, email_addr, "", "", "(duplicate)", "", filename, "DUPLICATE"
         )
-        return None
+        return "DUPLICATE"
 
     # 1. Extract role
     detected_role = extract_role(subject, body, filename)
@@ -757,9 +925,17 @@ def _process_single_attachment(
 
     logger.info("  Classification: %s", folder_rel)
 
-    # Track unsorted
+    # If Unsorted, don't download — label for manual review
     if folder_rel.endswith("/Unsorted"):
         counters["unsorted_resumes"] += 1
+        candidate_name = extract_candidate_name(from_header, subject, filename)
+        logger.info("  ⊘  Unsorted — skipping download, will label for manual review.")
+        log_to_csv(
+            from_header, email_addr, candidate_name,
+            detected_role or "(none)", folder_rel, "",
+            filename, "UNSORTED",
+        )
+        return "UNSORTED"
 
     # 3. Candidate name
     candidate_name = extract_candidate_name(from_header, subject, filename)
@@ -774,35 +950,24 @@ def _process_single_attachment(
     dest_path = deduplicate_path(dest_dir / new_name)
 
     if dry_run:
-        # Structured dry-run preview
         dept_label = folder_rel.replace(f"{YEAR}/", "")
         logger.info("  [DRY-RUN] Would save: %s → %s", candidate_name, dept_label)
         log_to_csv(
-            from_header,
-            email_addr,
-            candidate_name,
-            detected_role or "(none)",
-            folder_rel,
-            str(dest_path),
-            filename,
-            "DRY_RUN",
+            from_header, email_addr, candidate_name,
+            detected_role or "(none)", folder_rel,
+            str(dest_path), filename, "DRY_RUN",
         )
-        return dest_dir
+        return "DRY_RUN"
     else:
         dest_path.write_bytes(data)
         logger.info("  ✓  Saved: %s", dest_path.name)
         counters["resumes_downloaded"] += 1
         log_to_csv(
-            from_header,
-            email_addr,
-            candidate_name,
-            detected_role or "(none)",
-            folder_rel,
-            str(dest_path),
-            filename,
-            "SAVED",
+            from_header, email_addr, candidate_name,
+            detected_role or "(none)", folder_rel,
+            str(dest_path), filename, "SAVED",
         )
-        return dest_dir
+        return "SAVED"
 
 
 # ──────────────────────────────────────────────
@@ -830,7 +995,7 @@ def _ensure_label(imap_conn: imaplib.IMAP4_SSL, label: str) -> None:
 
 
 def _has_processed_label(imap_conn: imaplib.IMAP4_SSL, uid: bytes) -> bool:
-    """Check if the email already has the processed label."""
+    """Check if the email already has the processed or unsorted label."""
     try:
         status, data = imap_conn.uid("FETCH", uid, "(X-GM-LABELS)")
         if status == "OK" and data and data[0]:
@@ -839,27 +1004,39 @@ def _has_processed_label(imap_conn: imaplib.IMAP4_SSL, uid: bytes) -> bool:
                 raw = raw[1]
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8", errors="replace")
-            return PROCESSED_LABEL in str(raw)
+            labels_str = str(raw)
+            return PROCESSED_LABEL in labels_str or UNSORTED_LABEL in labels_str
     except Exception:  # noqa: BLE001
         pass
     return False
 
 
-def _move_to_processed(imap_conn: imaplib.IMAP4_SSL, uid: bytes) -> None:
-    """Add the configured processed label via Gmail X-GM-LABELS."""
+def _apply_gmail_label(imap_conn: imaplib.IMAP4_SSL, uid: bytes, label: str) -> None:
+    """Add a Gmail label via X-GM-LABELS."""
     try:
-        _ensure_label(imap_conn, PROCESSED_LABEL)
-        # Use Gmail's X-GM-LABELS extension to add label without COPY+DELETE
-        label_str = f'"{PROCESSED_LABEL}"'
+        _ensure_label(imap_conn, label)
+        label_str = f'"{label}"'
         result = imap_conn.uid("STORE", uid, "+X-GM-LABELS", label_str)
         if result[0] == "OK":
-            logger.info("  ✓ Labelled: %s", PROCESSED_LABEL)
+            logger.info("  ✓ Labelled: %s", label)
         else:
-            # Fallback to COPY approach
             imap_conn.uid("COPY", uid, label_str)
-            logger.info("  ✓ Labelled (copy): %s", PROCESSED_LABEL)
+            logger.info("  ✓ Labelled (copy): %s", label)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("  Could not label email '%s': %s", PROCESSED_LABEL, exc)
+        logger.warning("  Could not label email '%s': %s", label, exc)
+
+
+UNSORTED_LABEL = "Unsorted"
+
+
+def _move_to_processed(imap_conn: imaplib.IMAP4_SSL, uid: bytes) -> None:
+    """Add the configured processed label via Gmail X-GM-LABELS."""
+    _apply_gmail_label(imap_conn, uid, PROCESSED_LABEL)
+
+
+def _label_as_unsorted(imap_conn: imaplib.IMAP4_SSL, uid: bytes) -> None:
+    """Label the email as 'Unsorted' for manual review."""
+    _apply_gmail_label(imap_conn, uid, UNSORTED_LABEL)
 
 
 # ──────────────────────────────────────────────
@@ -990,6 +1167,7 @@ def run(mailbox: str, dry_run: bool = False) -> dict[str, int]:
     """Fetch and process all emails in *mailbox*. Returns counters."""
     create_folder_tree()
     _init_csv_log()
+    _init_multi_attachment_review_log()
 
     counters = _new_counters()
 
@@ -1034,7 +1212,9 @@ def run(mailbox: str, dry_run: bool = False) -> dict[str, int]:
 
                     msg = email.message_from_bytes(raw_bytes)
                     try:
-                        process_email(msg, uid, conn, dry_run=dry_run, counters=counters)
+                        process_email(
+                            msg, uid, conn, dry_run=dry_run, counters=counters
+                        )
                     except Exception:
                         logger.exception("Error processing UID %s", uid)
                         counters["errors"] += 1
@@ -1082,6 +1262,7 @@ def run_realtime(mailbox: str, dry_run: bool = False) -> None:
 
     create_folder_tree()
     _init_csv_log()
+    _init_multi_attachment_review_log()
 
     total_counters = _new_counters()
 

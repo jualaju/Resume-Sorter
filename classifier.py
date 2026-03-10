@@ -262,7 +262,9 @@ def classify_by_ai(role: str) -> Optional[str]:
     try:
         import google.generativeai as genai  # type: ignore
     except ImportError:
-        logger.warning("google-generativeai package not installed – skipping AI classification.")
+        logger.warning(
+            "google-generativeai package not installed – skipping AI classification."
+        )
         return None
 
     all_folders = get_all_folder_paths()

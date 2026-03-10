@@ -1,54 +1,54 @@
 timestamp,email_from,email_address,candidate_name,detected_role,classification_result,destination_folder,filename,status
-2026-03-10T09:47:00,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:01,Google <no-reply@google.com>,no-reply@google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:03,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:04,Vercel <notifications@vercel.com>,notifications@vercel.com,Vercel,(none),(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:06,v0 Team <ship@info.vercel.com>,ship@info.vercel.com,v0 Team,Turn ideas into apps. Welcome to v0.,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:08,v0 Team <ship@info.vercel.com>,ship@info.vercel.com,v0 Team,Build with just a prompt,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:09,v0 Team <ship@info.vercel.com>,ship@info.vercel.com,v0 Team,Build smarter apps with AI and real data,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:10,v0 Team <ship@info.vercel.com>,ship@info.vercel.com,v0 Team,Build it in v0. Publish it on Vercel.,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:11,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,Ask anything  –  really,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:12,AMD Registration <account.help@amd.com>,account.help@amd.com,AMD Registration,Please activate your AMD account,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:14,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:15,YouTube <no-reply@youtube.com>,no-reply@youtube.com,YouTube,(none),(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:16,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,Free ChatGPT Go for 12 months,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:17,Vercel Security <security@vercel.com>,security@vercel.com,Vercel Security,Important Security Update for Next.js 15 & 16,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:19,Talha Tariq <security@vercel.com>,security@vercel.com,Talha Tariq,Action Required: upgrade Next.js immediately  — CVE-2025-55182 (React2Shell),(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:20,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,Free ChatGPT Go for 12 months,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:22,Talha Tariq <ship@info.vercel.com>,ship@info.vercel.com,Talha Tariq,"Security Update: Two additional React Server Components
+2026-03-10T12:47:14,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:15,Google <no-reply@google.com>,no-reply@google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:16,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:16,Vercel <notifications@vercel.com>,notifications@vercel.com,Vercel,(none),(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:18,v0 Team <ship@info.vercel.com>,ship@info.vercel.com,v0 Team,Turn ideas into apps. Welcome to v0.,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:19,v0 Team <ship@info.vercel.com>,ship@info.vercel.com,v0 Team,Build with just a prompt,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:20,v0 Team <ship@info.vercel.com>,ship@info.vercel.com,v0 Team,Build smarter apps with AI and real data,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:20,v0 Team <ship@info.vercel.com>,ship@info.vercel.com,v0 Team,Build it in v0. Publish it on Vercel.,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:21,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,Ask anything  –  really,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:22,AMD Registration <account.help@amd.com>,account.help@amd.com,AMD Registration,Please activate your AMD account,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:23,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:24,YouTube <no-reply@youtube.com>,no-reply@youtube.com,YouTube,(none),(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:25,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,Free ChatGPT Go for 12 months,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:26,Vercel Security <security@vercel.com>,security@vercel.com,Vercel Security,Important Security Update for Next.js 15 & 16,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:27,Talha Tariq <security@vercel.com>,security@vercel.com,Talha Tariq,Action Required: upgrade Next.js immediately  — CVE-2025-55182 (React2Shell),(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:28,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,Free ChatGPT Go for 12 months,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:29,Talha Tariq <ship@info.vercel.com>,ship@info.vercel.com,Talha Tariq,"Security Update: Two additional React Server Components
  vulnerabilities",(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:23,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:24,Google <no-reply@google.com>,no-reply@google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:25,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,Easy ways to bring ideas to life,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:27,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,You + ChatGPT Images,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:28,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,Help strengthen the security of your Google Account,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:30,Vercel <system@vercel.com>,system@vercel.com,Vercel,470910 - Vercel Sign-in Verification,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:32,"Microsoft account team
+2026-03-10T12:47:30,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:30,Google <no-reply@google.com>,no-reply@google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:31,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,Easy ways to bring ideas to life,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:32,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,You + ChatGPT Images,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:33,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,Help strengthen the security of your Google Account,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:34,Vercel <system@vercel.com>,system@vercel.com,Vercel,470910 - Vercel Sign-in Verification,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:35,"Microsoft account team
 	<account-security-noreply@accountprotection.microsoft.com>",account-security-noreply@accountprotection.microsoft.com,Microsoft account team,Verify your email address,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:34,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,Easy self-care you can start today,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:36,Ant at Supabase <ant.wilson@supabase.com>,ant.wilson@supabase.com,Ant at Supabase,Supa Update December 2025,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:37,ant.wilson@supabase.com,ant.wilson@supabase.com,Ant Wilson,(none),(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:38,ant.wilson@supabase.com,ant.wilson@supabase.com,Ant Wilson,(none),(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:40,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,Critical security alert,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:41,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,Use ChatGPT to make life easier,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:43,Google Play <googleplay-noreply@google.com>,googleplay-noreply@google.com,Google Play,Updates to how privacy settings work on Play,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:44,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,Write faster with ChatGPT,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:45,Canva <no-reply@canva.com>,no-reply@canva.com,Canva,Your login code is 805992,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:46,Canva <welcome@engage.canva.com>,welcome@engage.canva.com,Canva,New to Canva? Start here  👉,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:47,Canva <marketing@engage.canva.com>,marketing@engage.canva.com,Canva,You’re  here! But not designing yet?,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:49,v0 Team <ship@info.vercel.com>,ship@info.vercel.com,v0 Team,(none),(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:50,Canva Create HQ <canvacreate@engage.canva.com>,canvacreate@engage.canva.com,Canva Create HQ,Catch the Canva Create Keynote from home,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:51,Canva <marketing@engage.canva.com>,marketing@engage.canva.com,Canva,Still exploring the Shark Tank collection?,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:52,Ant at Supabase <ant.wilson@supabase.com>,ant.wilson@supabase.com,Ant at Supabase,Supa Update February 2026,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:54,Canva <start@engage.canva.com>,start@engage.canva.com,Canva,You're a force for good,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:55,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,Not sure what to make? Start here,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:56,Canva <marketing@engage.canva.com>,marketing@engage.canva.com,Canva,"Hey Jual, we miss you...",(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:57,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,New image styles just dropped,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:58,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:47:59,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,2-Step Verification turned on,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:48:00,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:48:02,Canva <marketing@engage.canva.com>,marketing@engage.canva.com,Canva,Make your social content shine,(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:48:03,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
-2026-03-10T09:48:04,Jual Aju <jualajum6@gmail.com>,jualajum6@gmail.com,Harishankar,Assistant Professor – Biomedical Engineering,2026/BM/Faculty,Resumes/2026/BM/Faculty/Harishankar_Assistant_Professor_Biomedical_Engineering.pdf,Application_harishankar.pdf,SAVED
-2026-03-10T09:48:08,Jual Aju <jualajum6@gmail.com>,jualajum6@gmail.com,Position Cerificate,Assistant Professor in Chemistry,2026/ASH/Chemistry,Resumes/2026/ASH/Chemistry/Position_Cerificate_Assistant_Professor_Chemistry.pdf,Position Cerificate.pdf,SAVED
-2026-03-10T09:48:13,Jual Aju <jualajum6@gmail.com>,jualajum6@gmail.com,Doc,Enquiry about Faculty vacancy,2026/Unsorted,Resumes/2026/Unsorted/Doc_Enquiry_About_Faculty_Vacancy.pdf,DOC-20260130-WA0009..pdf,SAVED
+2026-03-10T12:47:37,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,Easy self-care you can start today,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:38,Ant at Supabase <ant.wilson@supabase.com>,ant.wilson@supabase.com,Ant at Supabase,Supa Update December 2025,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:39,ant.wilson@supabase.com,ant.wilson@supabase.com,Ant Wilson,(none),(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:41,ant.wilson@supabase.com,ant.wilson@supabase.com,Ant Wilson,(none),(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:43,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,Critical security alert,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:44,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,Use ChatGPT to make life easier,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:46,Google Play <googleplay-noreply@google.com>,googleplay-noreply@google.com,Google Play,Updates to how privacy settings work on Play,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:48,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,Write faster with ChatGPT,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:49,Canva <no-reply@canva.com>,no-reply@canva.com,Canva,Your login code is 805992,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:50,Canva <welcome@engage.canva.com>,welcome@engage.canva.com,Canva,New to Canva? Start here  👉,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:51,Canva <marketing@engage.canva.com>,marketing@engage.canva.com,Canva,You’re  here! But not designing yet?,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:52,v0 Team <ship@info.vercel.com>,ship@info.vercel.com,v0 Team,(none),(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:52,Canva Create HQ <canvacreate@engage.canva.com>,canvacreate@engage.canva.com,Canva Create HQ,Catch the Canva Create Keynote from home,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:53,Canva <marketing@engage.canva.com>,marketing@engage.canva.com,Canva,Still exploring the Shark Tank collection?,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:54,Ant at Supabase <ant.wilson@supabase.com>,ant.wilson@supabase.com,Ant at Supabase,Supa Update February 2026,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:55,Canva <start@engage.canva.com>,start@engage.canva.com,Canva,You're a force for good,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:56,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,Not sure what to make? Start here,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:57,Canva <marketing@engage.canva.com>,marketing@engage.canva.com,Canva,"Hey Jual, we miss you...",(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:47:59,ChatGPT <noreply@email.openai.com>,noreply@email.openai.com,ChatGPT,New image styles just dropped,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:48:01,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:48:02,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,2-Step Verification turned on,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:48:03,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:48:05,Canva <marketing@engage.canva.com>,marketing@engage.canva.com,Canva,Make your social content shine,(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:48:06,Google <no-reply@accounts.google.com>,no-reply@accounts.google.com,Google,(none),(no attachment),,,NO_ATTACHMENT
+2026-03-10T12:48:12,Jual Aju <jualajum6@gmail.com>,jualajum6@gmail.com,Jual Aju,Assistant Professor – Biomedical Engineering,2026/BM/Faculty,Resumes/2026/BM/Faculty/Jual_Aju,Application_harishankar.pdf; Harishankar_Anilkumar_.pdf,SAVED
+2026-03-10T12:48:18,Jual Aju <jualajum6@gmail.com>,jualajum6@gmail.com,Jual Aju,Assistant Professor in Chemistry,2026/ASH/Chemistry,Resumes/2026/ASH/Chemistry/Jual_Aju,Position Cerificate.pdf; Experience Certificate Research Scholar Niist.pdf; GATE 2020.pdf; Appoinment Letter.pdf; Dr. Sanoop P_C.V.pdf; KSCSTE Award Letter.pdf; X- Certificate.pdf; Ph. D. Certificate.pdf,SAVED
+2026-03-10T12:48:24,Jual Aju <jualajum6@gmail.com>,jualajum6@gmail.com,Doc,Enquiry about Faculty vacancy,2026/Unsorted,,DOC-20260130-WA0009..pdf,UNSORTED
