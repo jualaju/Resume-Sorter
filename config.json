@@ -4,8 +4,8 @@
   "mailbox": "INBOX",
   "processed_label": "Processed Applications",
 
-  "openai_api_key": "AIzaSyBJdoKCSCdlyRrh90gmEzN4jfDC7GdJs9o",
-  "openai_model": "gpt-4o-mini",
+  "gemini_api_key": "AIzaSyBJdoKCSCdlyRrh90gmEzN4jfDC7GdJs9o",
+  "gemini_model": "gemini-2.0-flash",
 
   "base_folder": "./Resumes",
   "year": "2026",

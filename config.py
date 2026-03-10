@@ -59,11 +59,11 @@ MAILBOX: str = os.getenv("MAILBOX") or _cfg.get("mailbox", "INBOX")
 PROCESSED_LABEL: str = _cfg.get("processed_label", "Processed Applications")
 
 # ──────────────────────────────────────────────
-# OpenAI API key (.env overrides config.json)
+# Gemini API key (.env overrides config.json)
 # ──────────────────────────────────────────────
-OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY") or _cfg.get("openai_api_key", "")
-OPENAI_MODEL: str = os.getenv("OPENAI_MODEL") or _cfg.get(
-    "openai_model", "gpt-4o-mini"
+GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY") or _cfg.get("gemini_api_key", "")
+GEMINI_MODEL: str = os.getenv("GEMINI_MODEL") or _cfg.get(
+    "gemini_model", "gemini-2.0-flash"
 )
 
 # ──────────────────────────────────────────────

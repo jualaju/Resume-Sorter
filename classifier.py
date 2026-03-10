@@ -6,7 +6,7 @@ Strategy
 1. **Learned mappings** – if auto-learning is enabled, check ``learning_db.json``
    for previously learned role→folder mappings first.
 2. **Keyword match** – fast, free, checked via ``KEYWORD_ROLE_MAP`` from config.
-3. **OpenAI (GPT)** – if no keyword hit and an API key is configured, sends the
+3. **Google Gemini** – if no keyword hit and an API key is configured, sends the
    extracted role together with the full folder tree to the model and asks it to
    return the single best-matching folder path.
 4. **Fallback** – if everything fails (or confidence is low), returns the
@@ -26,8 +26,8 @@ from config import (
     ENABLE_AUTO_LEARNING,
     KEYWORD_ROLE_MAP,
     LEARNING_DB_FILE,
-    OPENAI_API_KEY,
-    OPENAI_MODEL,
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
     YEAR,
     get_all_folder_paths,
 )
@@ -183,15 +183,26 @@ def classify_by_keyword(role: str) -> Optional[str]:
     for keyword, folder_path in KEYWORD_ROLE_MAP.items():
         # Check if keyword appears inside the role text
         if keyword in norm:
-            score = len(keyword) / len(norm) if norm else 0
+            # For known department identifiers (≥4 chars), treat as strong match
+            if len(keyword) >= 4:
+                score = 1.0
+            else:
+                score = len(keyword) / len(norm) if norm else 0
+            if score > best_score:
+                best_score = score
+                best_path = folder_path
+        # Also check if role text appears inside the keyword
+        elif norm in keyword:
+            score = len(norm) / len(keyword) if keyword else 0
             if score > best_score:
                 best_score = score
                 best_path = folder_path
         # Also try fuzzy similarity
-        ratio = SequenceMatcher(None, norm, keyword).ratio()
-        if ratio > 0.80 and ratio > best_score:
-            best_score = ratio
-            best_path = folder_path
+        else:
+            ratio = SequenceMatcher(None, norm, keyword).ratio()
+            if ratio > 0.75 and ratio > best_score:
+                best_score = ratio
+                best_path = folder_path
 
     if best_path and best_score >= 0.45:
         logger.info(
@@ -203,7 +214,7 @@ def classify_by_keyword(role: str) -> Optional[str]:
 
 
 # ──────────────────────────────────────────────
-# OpenAI-based classifier
+# Google Gemini-based classifier
 # ──────────────────────────────────────────────
 
 _SYSTEM_PROMPT = """\
@@ -229,40 +240,46 @@ Decision rules:
 - Physical education / sports roles map to Physical Education.
 - Administrative roles map to Dean/Administration.
 - Chemistry/Physics/Maths/Economics/English/Mechanical teaching roles map to ASH/<subject>.
+- Biomedical / Biomedical Engineering roles map to BM/Faculty or BM/Lab.
+- Biotechnology roles map to BT/Faculty or BT/Lab.
+- Civil Engineering roles map to CE/Faculty or CE/Lab.
+- CSE / Computer Science roles map to CSE/Faculty or CSE/Lab.
+- ECE / Electronics & Communication roles map to ECE/Faculty or ECE/Lab.
+- EEE / Electrical & Electronics roles map to EEE/Faculty or EEE/Lab.
 """
 
 
 def classify_by_ai(role: str) -> Optional[str]:
     """
-    Use OpenAI chat completion to classify the role.
+    Use Google Gemini to classify the role.
 
     Returns a folder path string or None on failure / low confidence.
     """
-    if not OPENAI_API_KEY:
-        logger.debug("No OpenAI API key configured – skipping AI classification.")
+    if not GEMINI_API_KEY:
+        logger.debug("No Gemini API key configured – skipping AI classification.")
         return None
 
     try:
-        from openai import OpenAI  # type: ignore
+        import google.generativeai as genai  # type: ignore
     except ImportError:
-        logger.warning("openai package not installed – skipping AI classification.")
+        logger.warning("google-generativeai package not installed – skipping AI classification.")
         return None
 
     all_folders = get_all_folder_paths()
     user_prompt = f"Role: {role}\n\nAvailable folders:\n" + "\n".join(all_folders)
+    full_prompt = _SYSTEM_PROMPT + "\n" + user_prompt
 
     try:
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        response = client.chat.completions.create(
-            model=OPENAI_MODEL,
-            temperature=0,
-            max_tokens=150,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel(GEMINI_MODEL)
+        response = model.generate_content(
+            full_prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0,
+                max_output_tokens=150,
+            ),
         )
-        text = response.choices[0].message.content.strip()
+        text = response.text.strip()
         # Parse JSON from the response (handle markdown fences)
         text = re.sub(r"^```json\s*", "", text)
         text = re.sub(r"\s*```$", "", text)

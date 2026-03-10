@@ -70,6 +70,7 @@ from config import (
     IMAP_PORT,
     IMAP_SERVER,
     INVALID_DIR,
+    LEARNING_DB_FILE,
     LOG_FILE,
     MAILBOX,
     PROCESSED_LABEL,
@@ -496,6 +497,66 @@ def passes_subject_filter(subject: str) -> bool:
 
 
 # ──────────────────────────────────────────────
+# Attachment classification: resume vs supporting docs
+# ──────────────────────────────────────────────
+
+# Filename patterns that indicate a CV/resume (case-insensitive)
+_RESUME_PATTERNS = re.compile(
+    r"(resume|cv|curriculum[\s_-]*vitae|biodata|application)", re.I
+)
+# Filename patterns that indicate a supporting document (not a resume)
+_SUPPORT_DOC_PATTERNS = re.compile(
+    r"(certificate|mark\s*sheet|grade|gate[\s_-]?\d|award|letter|"
+    r"appointment|experience[\s_-]*(cert|letter)|transcript|"
+    r"degree|diploma|scorecard|id[\s_-]*proof|passport|aadhaar|"
+    r"pan[\s_-]*card|photo|signature|recommend)", re.I
+)
+
+
+def _split_resume_and_docs(
+    attachments: list[tuple[str, bytes]],
+) -> tuple[list[tuple[str, bytes]], list[tuple[str, bytes]]]:
+    """Split attachments into (resumes, supporting_docs).
+
+    Heuristic:
+      1. If a filename matches _RESUME_PATTERNS → resume.
+      2. If a filename matches _SUPPORT_DOC_PATTERNS → supporting doc.
+      3. If only one attachment, it's the resume.
+      4. If nothing matched, pick the largest file as the resume.
+    """
+    if len(attachments) <= 1:
+        return attachments, []
+
+    resumes: list[tuple[str, bytes]] = []
+    docs: list[tuple[str, bytes]] = []
+    unknown: list[tuple[str, bytes]] = []
+
+    for filename, data in attachments:
+        name_lower = Path(filename).stem.lower()
+        if _RESUME_PATTERNS.search(name_lower):
+            resumes.append((filename, data))
+        elif _SUPPORT_DOC_PATTERNS.search(name_lower):
+            docs.append((filename, data))
+        else:
+            unknown.append((filename, data))
+
+    # If no file was identified as a resume, pick the largest unknown file
+    if not resumes:
+        if unknown:
+            unknown.sort(key=lambda x: len(x[1]), reverse=True)
+            resumes.append(unknown.pop(0))
+        elif docs:
+            # All files look like supporting docs — pick the largest as resume
+            docs.sort(key=lambda x: len(x[1]), reverse=True)
+            resumes.append(docs.pop(0))
+
+    # Remaining unknowns are supporting docs
+    docs.extend(unknown)
+
+    return resumes, docs
+
+
+# ──────────────────────────────────────────────
 # Core: process a single email
 # ──────────────────────────────────────────────
 
@@ -592,9 +653,16 @@ def process_email(
             )
         return
 
-    for filename, data in valid_attachments:
+    # ── Separate resume(s) from supporting documents ──
+    resume_attachments, supporting_attachments = _split_resume_and_docs(
+        valid_attachments
+    )
+
+    # First, classify and save the resume attachment(s) — remember dest_dir
+    dest_dir_for_docs: Optional[Path] = None
+    for filename, data in resume_attachments:
         try:
-            _process_single_attachment(
+            saved_dir = _process_single_attachment(
                 filename,
                 data,
                 from_header,
@@ -604,6 +672,8 @@ def process_email(
                 dry_run,
                 counters,
             )
+            if saved_dir:
+                dest_dir_for_docs = saved_dir
         except Exception as exc:  # noqa: BLE001
             logger.exception("  Error processing attachment '%s': %s", filename, exc)
             counters["errors"] += 1
@@ -617,6 +687,21 @@ def process_email(
                     logger.info("  Saved error file to: %s", err_dest)
                 except Exception:  # noqa: BLE001
                     pass
+
+    # Save supporting documents alongside the resume in the same folder
+    for filename, data in supporting_attachments:
+        if is_duplicate(data, filename, from_header):
+            counters["duplicates_skipped"] += 1
+            continue
+        if dest_dir_for_docs and not dry_run:
+            try:
+                dest = deduplicate_path(dest_dir_for_docs / filename)
+                dest.write_bytes(data)
+                logger.info("  ✓  Supporting doc saved: %s", dest.name)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("  Failed to save supporting doc: %s", exc)
+        elif dry_run:
+            logger.info("  [DRY-RUN] Would save supporting doc: %s", filename)
 
     # ── Move email to processed label (unless dry-run) ──
     if not dry_run:
@@ -632,8 +717,11 @@ def _process_single_attachment(
     body: str,
     dry_run: bool,
     counters: dict[str, int],
-) -> None:
-    """Process a single valid attachment: classify, deduplicate, save."""
+) -> Optional[Path]:
+    """Process a single valid attachment: classify, deduplicate, save.
+
+    Returns the destination directory (Path) if the file was saved, or None.
+    """
 
     # ── Duplicate check ──
     if is_duplicate(data, filename, from_header):
@@ -641,7 +729,7 @@ def _process_single_attachment(
         log_to_csv(
             from_header, email_addr, "", "", "(duplicate)", "", filename, "DUPLICATE"
         )
-        return
+        return None
 
     # 1. Extract role
     detected_role = extract_role(subject, body, filename)
@@ -699,6 +787,7 @@ def _process_single_attachment(
             filename,
             "DRY_RUN",
         )
+        return dest_dir
     else:
         dest_path.write_bytes(data)
         logger.info("  ✓  Saved: %s", dest_path.name)
@@ -713,6 +802,7 @@ def _process_single_attachment(
             filename,
             "SAVED",
         )
+        return dest_dir
 
 
 # ──────────────────────────────────────────────
@@ -913,61 +1003,62 @@ def run(mailbox: str, dry_run: bool = False) -> dict[str, int]:
         status, _ = conn.select(f'"{mailbox}"' if " " in mailbox else mailbox)
         if status != "OK":
             logger.error("Could not open mailbox '%s'.", mailbox)
-            return counters
-
-        # Search ALL emails (read + unread)
-        status, msg_ids = conn.uid("SEARCH", None, "ALL")
-        if status != "OK" or not msg_ids or not msg_ids[0]:
-            logger.info("No emails found in '%s'.", mailbox)
-            return counters
-
-        uids = msg_ids[0].split()
-        logger.info("Found %d email(s) in '%s'.", len(uids), mailbox)
-
-        for uid in uids:
-            if _shutdown:
-                logger.info("Shutting down gracefully…")
-                break
-
-            # Skip emails already labelled as processed
-            if _has_processed_label(conn, uid):
-                continue
-
-            status, raw = conn.uid("FETCH", uid, "(RFC822)")
-            if status != "OK" or not raw or not raw[0]:
-                logger.warning("Failed to fetch UID %s", uid)
-                continue
-
-            raw_email = raw[0]
-            if isinstance(raw_email, tuple):
-                raw_bytes = raw_email[1]
+        else:
+            # Search ALL emails (read + unread)
+            status, msg_ids = conn.uid("SEARCH", None, "ALL")
+            if status != "OK" or not msg_ids or not msg_ids[0]:
+                logger.info("No emails found in '%s'.", mailbox)
             else:
-                raw_bytes = raw_email  # type: ignore[assignment]
+                uids = msg_ids[0].split()
+                logger.info("Found %d email(s) in '%s'.", len(uids), mailbox)
 
-            msg = email.message_from_bytes(raw_bytes)
-            try:
-                process_email(msg, uid, conn, dry_run=dry_run, counters=counters)
-            except Exception:
-                logger.exception("Error processing UID %s", uid)
-                counters["errors"] += 1
-                continue
+                for uid in uids:
+                    if _shutdown:
+                        logger.info("Shutting down gracefully…")
+                        break
 
-            time.sleep(0.3)
+                    # Skip emails already labelled as processed
+                    if _has_processed_label(conn, uid):
+                        continue
+
+                    status, raw = conn.uid("FETCH", uid, "(RFC822)")
+                    if status != "OK" or not raw or not raw[0]:
+                        logger.warning("Failed to fetch UID %s", uid)
+                        continue
+
+                    raw_email = raw[0]
+                    if isinstance(raw_email, tuple):
+                        raw_bytes = raw_email[1]
+                    else:
+                        raw_bytes = raw_email  # type: ignore[assignment]
+
+                    msg = email.message_from_bytes(raw_bytes)
+                    try:
+                        process_email(msg, uid, conn, dry_run=dry_run, counters=counters)
+                    except Exception:
+                        logger.exception("Error processing UID %s", uid)
+                        counters["errors"] += 1
+                        continue
+
+                    time.sleep(0.3)
 
     finally:
         try:
             conn.close()
         except Exception:
             pass
-        conn.logout()
+        try:
+            conn.logout()
+        except Exception:
+            pass
         logger.info("Disconnected from Gmail.")
 
-    # Print summary
-    print_summary(counters)
+        # Print summary (always, even on early exit)
+        print_summary(counters)
 
-    # Generate statistics if enabled
-    if ENABLE_STATISTICS and not dry_run:
-        generate_statistics()
+        # Generate statistics if enabled
+        if ENABLE_STATISTICS and not dry_run:
+            generate_statistics()
 
     logger.info("Done.  CSV log at %s", LOG_FILE)
     return counters
@@ -1067,6 +1158,125 @@ def run_realtime(mailbox: str, dry_run: bool = False) -> None:
 
 
 # ──────────────────────────────────────────────
+# Clear / Reset
+# ──────────────────────────────────────────────
+
+
+def clear_all() -> None:
+    """Delete all processed resumes, logs, hashes, and learning DB.
+
+    Asks for interactive confirmation before proceeding.
+    """
+    print("\n⚠  This will delete ALL processed resumes and reset logs.")
+    print("   Files in the following locations will be removed:")
+    print(f"     • {BASE_DIR / YEAR}/  (all department folders)")
+    print(f"     • {UNSORTED_DIR}/")
+    print(f"     • {INVALID_DIR}/")
+    print(f"     • {ERRORS_DIR}/")
+    print(f"     • {LOG_FILE}")
+    print(f"     • {HASHES_FILE}")
+    print(f"     • {LEARNING_DB_FILE}")
+    print(f"     • {DEPARTMENT_REPORT_FILE}")
+    answer = input("\n  Are you sure? [y/N] ").strip().lower()
+    if answer != "y":
+        print("  Cancelled.")
+        return
+
+    deleted = 0
+
+    # Delete resume files from all department folders
+    year_dir = BASE_DIR / YEAR
+    if year_dir.exists():
+        for f in year_dir.rglob("*"):
+            if f.is_file():
+                f.unlink()
+                deleted += 1
+
+    # Delete files in Invalid_Resumes and Errors
+    for folder in [INVALID_DIR, ERRORS_DIR]:
+        if folder.exists():
+            for f in folder.iterdir():
+                if f.is_file():
+                    f.unlink()
+                    deleted += 1
+
+    # Reset CSV log (keep header only)
+    if LOG_FILE.exists():
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        import csv as _csv
+
+        with open(LOG_FILE, "w", newline="", encoding="utf-8") as f:
+            writer = _csv.writer(f)
+            writer.writerow(_CSV_HEADERS)
+        deleted += 1
+
+    # Reset hashes
+    if HASHES_FILE.exists():
+        with open(HASHES_FILE, "w", encoding="utf-8") as f:
+            json.dump({}, f)
+        deleted += 1
+
+    # Reset learning DB
+    if LEARNING_DB_FILE.exists():
+        with open(LEARNING_DB_FILE, "w", encoding="utf-8") as f:
+            json.dump({}, f)
+        deleted += 1
+
+    # Reset department report
+    if DEPARTMENT_REPORT_FILE.exists():
+        DEPARTMENT_REPORT_FILE.unlink()
+        deleted += 1
+
+    print(f"\n  ✓ Cleared {deleted} file(s). Ready for a fresh run.")
+    print(
+        "  Tip: use  --undo-labels  to also remove Gmail 'Processed Applications' "
+        "labels so emails are re-processed.\n"
+    )
+
+
+def undo_labels(mailbox: str) -> None:
+    """Remove the 'Processed Applications' label from all emails in the mailbox.
+
+    This allows previously processed emails to be re-processed on the next run.
+    """
+    conn = connect_gmail()
+    removed = 0
+    try:
+        status, _ = conn.select(f'"{mailbox}"' if " " in mailbox else mailbox)
+        if status != "OK":
+            logger.error("Could not open mailbox '%s'.", mailbox)
+            return
+
+        status, msg_ids = conn.uid("SEARCH", None, "ALL")
+        if status != "OK" or not msg_ids or not msg_ids[0]:
+            logger.info("No emails found in '%s'.", mailbox)
+            return
+
+        uids = msg_ids[0].split()
+        label_str = f'"{PROCESSED_LABEL}"'
+        for uid in uids:
+            if _has_processed_label(conn, uid):
+                try:
+                    conn.uid("STORE", uid, "-X-GM-LABELS", label_str)
+                    removed += 1
+                except Exception:  # noqa: BLE001
+                    pass
+
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        try:
+            conn.logout()
+        except Exception:
+            pass
+
+    print(f"\n  ✓ Removed '{PROCESSED_LABEL}' label from {removed} email(s).")
+    print("  Emails will be re-processed on the next run.\n")
+
+
+# ──────────────────────────────────────────────
 # CLI
 # ──────────────────────────────────────────────
 
@@ -1095,9 +1305,30 @@ def main() -> None:
         action="store_true",
         help="Generate department statistics report and exit.",
     )
+    parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Delete all processed resumes and reset logs/hashes.",
+    )
+    parser.add_argument(
+        "--undo-labels",
+        action="store_true",
+        help="Remove 'Processed Applications' label from all emails.",
+    )
     args = parser.parse_args()
 
     mailbox = args.label or MAILBOX
+
+    # Clear mode
+    if args.clear:
+        clear_all()
+        if not args.undo_labels:
+            return
+
+    # Undo labels mode
+    if args.undo_labels:
+        undo_labels(mailbox)
+        return
 
     # Stats-only mode
     if args.stats:
